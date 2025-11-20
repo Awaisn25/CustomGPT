@@ -378,6 +378,10 @@ class UISettings(BaseModel):
     delete_all_files_button_enabled: bool = Field(
         False, description="If the button to delete all files is enabled or not."
     )
+    dropdown_models: list[str] = Field(
+        default_factory=list,
+        description="List of Ollama model names to show in the dropdown for hot-swapping.",
+    )
 
 
 class RerankSettings(BaseModel):

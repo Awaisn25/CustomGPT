@@ -25,6 +25,8 @@ from private_gpt.server.ingest.ingest_service import IngestService
 from private_gpt.server.recipes.summarize.summarize_service import SummarizeService
 from private_gpt.settings.settings import settings
 from private_gpt.ui.images import logo_svg
+from private_gpt.utils.model_config import ModelConfig, get_available_models
+from private_gpt.components.llm.llm_component import LLMComponent
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +90,13 @@ class PrivateGptUi:
         chat_service: ChatService,
         chunks_service: ChunksService,
         summarizeService: SummarizeService,
+        llm_component: LLMComponent,
     ) -> None:
         self._ingest_service = ingest_service
         self._chat_service = chat_service
         self._chunks_service = chunks_service
         self._summarize_service = summarizeService
+        self._llm_component = llm_component
 
         # Cache the UI blocks
         self._ui_block = None
@@ -105,6 +109,10 @@ class PrivateGptUi:
             settings().ui.default_mode, Modes.RAG_MODE
         )
         self._system_prompt = self._get_default_system_prompt(self._default_mode)
+
+        # Get available models and current model
+        self._available_models = get_available_models()
+        self._current_model = self._get_current_model_display_name()
 
     def _chat(
         self, message: str, history: list[list[str]], mode: Modes, *_: Any
@@ -363,6 +371,50 @@ class PrivateGptUi:
             gr.components.Textbox(self._selected_filename),
         ]
 
+    def _get_current_model_display_name(self) -> str:
+        """Get the display name of the currently active Ollama model."""
+        config_settings = settings()
+        if config_settings is None:
+            return "Unknown"
+
+        model_name = config_settings.ollama.llm_model
+        return f"Ollama: {model_name}"
+
+    def _get_model_options(self) -> list[str]:
+        """Get list of model display names for the dropdown."""
+        return [model.display_name for model in self._available_models]
+
+    def _swap_model(self, model_display_name: str) -> tuple[Any, Any]:
+        """Swap to a different model."""
+        try:
+            # Find the model config matching the display name
+            model_config = None
+            for model in self._available_models:
+                if model.display_name == model_display_name:
+                    model_config = model
+                    break
+
+            if model_config is None:
+                logger.error(f"Model not found: {model_display_name}")
+                return gr.update(), gr.update()
+
+            # Swap the LLM
+            self._llm_component.swap_llm(model_config)
+            self._current_model = model_display_name
+
+            logger.info(f"Successfully swapped to model: {model_display_name}")
+            return (
+                gr.update(value=model_display_name),
+                gr.update(label=f"Model: {model_display_name}"),
+            )
+        except Exception as e:
+            logger.error(f"Failed to swap model: {e}")
+            # Return current model to keep dropdown in sync
+            return (
+                gr.update(value=self._current_model),
+                gr.update(),
+            )
+
     def _build_ui_blocks(self) -> gr.Blocks:
         logger.debug("Creating the UI blocks")
         with gr.Blocks(
@@ -389,11 +441,25 @@ class PrivateGptUi:
             ".footer-zylon-link:hover { color: #C7BAFF; }"
             ".footer-zylon-ico { height: 20px; margin-left: 5px; background-color: antiquewhite; border-radius: 2px; }",
         ) as blocks:
-            with gr.Row():
-                gr.HTML(f"<div class='logo'/><img src={logo_svg} alt=PrivateGPT></div")
+            # with gr.Row():
+                # gr.HTML(f"<div class='logo'/><img src={logo_svg} alt=PrivateGPT></div")
 
             with gr.Row(equal_height=False):
                 with gr.Column(scale=3):
+                    # Model selection dropdown
+                    model_options = self._get_model_options()
+                    current_model_value = (
+                        self._current_model
+                        if self._current_model in model_options
+                        else (model_options[0] if model_options else "No models available")
+                    )
+                    model_dropdown = gr.Dropdown(
+                        choices=model_options,
+                        label="Model",
+                        value=current_model_value,
+                        interactive=True,
+                    )
+
                     default_mode = self._default_mode
                     mode = gr.Radio(
                         [mode.value for mode in MODES],
@@ -416,7 +482,7 @@ class PrivateGptUi:
                         self._list_ingested_files,
                         headers=["File name"],
                         label="Ingested Files",
-                        height=235,
+                        # height=235,
                         interactive=False,
                         render=False,  # Rendered under the button
                     )
@@ -546,27 +612,36 @@ class PrivateGptUi:
                     else:
                         label_text = f"LLM: {settings().llm.mode}"
 
+                    chatbot_component = gr.Chatbot(
+                        label=label_text,
+                        show_copy_button=True,
+                        elem_id="chatbot",
+                        render=False,
+                        avatar_images=(
+                            None,
+                            AVATAR_BOT,
+                        ),
+                    )
+
                     _ = gr.ChatInterface(
                         self._chat,
-                        chatbot=gr.Chatbot(
-                            label=label_text,
-                            show_copy_button=True,
-                            elem_id="chatbot",
-                            render=False,
-                            avatar_images=(
-                                None,
-                                AVATAR_BOT,
-                            ),
-                        ),
+                        chatbot=chatbot_component,
                         additional_inputs=[mode, upload_button, system_prompt_input],
+                    )
+
+                    # Set up model swap handler after both components are defined
+                    model_dropdown.change(
+                        self._swap_model,
+                        inputs=model_dropdown,
+                        outputs=[model_dropdown, chatbot_component],
                     )
 
             with gr.Row():
                 avatar_byte = AVATAR_BOT.read_bytes()
                 f_base64 = f"data:image/png;base64,{base64.b64encode(avatar_byte).decode('utf-8')}"
-                gr.HTML(
-                    f"<div class='footer'><a class='footer-zylon-link' href='https://zylon.ai/'>Maintained by Zylon <img class='footer-zylon-ico' src='{f_base64}' alt=Zylon></a></div>"
-                )
+                # gr.HTML(
+                #     f"<div class='footer'><a class='footer-zylon-link' href='https://zylon.ai/'>Maintained by Zylon <img class='footer-zylon-ico' src='{f_base64}' alt=Zylon></a></div>"
+                # )
 
         return blocks
 

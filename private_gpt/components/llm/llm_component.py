@@ -11,6 +11,7 @@ from transformers import AutoTokenizer  # type: ignore
 from private_gpt.components.llm.prompt_helper import get_prompt_style
 from private_gpt.paths import models_cache_path, models_path
 from private_gpt.settings.settings import Settings
+from private_gpt.utils.model_config import ModelConfig
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +19,11 @@ logger = logging.getLogger(__name__)
 @singleton
 class LLMComponent:
     llm: LLM
+    _settings: Settings
 
     @inject
     def __init__(self, settings: Settings) -> None:
+        self._settings = settings
         llm_mode = settings.llm.mode
         if settings.llm.tokenizer and settings.llm.mode != "mock":
             # Try to download the tokenizer. If it fails, the LLM will still work
@@ -223,3 +226,67 @@ class LLMComponent:
                 )
             case "mock":
                 self.llm = MockLLM()
+
+    def _create_ollama_llm(self, model_name: str, base_settings: Settings) -> LLM:
+        """Create an Ollama LLM instance for the given model name."""
+        try:
+            from llama_index.llms.ollama import Ollama  # type: ignore
+        except ImportError as e:
+            raise ImportError(
+                "Ollama dependencies not found, install with `poetry install --extras llms-ollama`"
+            ) from e
+
+        ollama_settings = base_settings.ollama
+
+        settings_kwargs = {
+            "tfs_z": ollama_settings.tfs_z,
+            "num_predict": ollama_settings.num_predict,
+            "top_k": ollama_settings.top_k,
+            "top_p": ollama_settings.top_p,
+            "repeat_last_n": ollama_settings.repeat_last_n,
+            "repeat_penalty": ollama_settings.repeat_penalty,
+        }
+
+        # Add :latest tag if not present
+        full_model_name = (
+            model_name + ":latest" if ":" not in model_name else model_name
+        )
+
+        llm = Ollama(
+            model=full_model_name,
+            base_url=ollama_settings.api_base,
+            temperature=base_settings.llm.temperature,
+            context_window=base_settings.llm.context_window,
+            additional_kwargs=settings_kwargs,
+            request_timeout=ollama_settings.request_timeout,
+        )
+
+        if ollama_settings.autopull_models:
+            from private_gpt.utils.ollama import check_connection, pull_model
+
+            if not check_connection(llm.client):
+                raise ValueError(
+                    f"Failed to connect to Ollama, "
+                    f"check if Ollama server is running on {ollama_settings.api_base}"
+                )
+            pull_model(llm.client, full_model_name)
+
+        return llm
+
+    def swap_llm(self, model_config: ModelConfig) -> None:
+        """Hot-swap the LLM to a different Ollama model."""
+        try:
+            new_llm = self._create_ollama_llm(model_config.model_name, self._settings)
+            # Clean up old LLM if needed (some LLMs may have resources to clean up)
+            if hasattr(self.llm, "close"):
+                try:
+                    self.llm.close()
+                except Exception:
+                    pass
+            self.llm = new_llm
+            logger.info(
+                f"Successfully swapped LLM to {model_config.display_name}",
+            )
+        except Exception as e:
+            logger.error(f"Failed to swap LLM to {model_config.display_name}: {e}")
+            raise

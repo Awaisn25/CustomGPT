@@ -1,197 +1,184 @@
-[tool.poetry]
+[project]
 name = "private-gpt"
-version = "0.6.2"
-description = "Private GPT"
-authors = ["Zylon <hi@zylon.ai>"]
-
-[tool.poetry.dependencies]
-python = ">=3.11,<3.12"
-# PrivateGPT
-fastapi = { extras = ["all"], version = "^0.115.0" }
-python-multipart = "^0.0.10"
-injector = "^0.22.0"
-pyyaml = "^6.0.2"
-watchdog = "^4.0.1"
-transformers = "^4.44.2"
-docx2txt = "^0.8"
-cryptography = "^3.1"
-# LlamaIndex core libs
-llama-index-core = ">=0.11.2,<0.12.0"
-llama-index-readers-file = "*"
-# Optional LlamaIndex integration libs
-llama-index-llms-llama-cpp = {version = "*", optional = true}
-llama-index-llms-openai = {version ="*", optional = true}
-llama-index-llms-openai-like = {version ="*", optional = true}
-llama-index-llms-ollama = {version ="*", optional = true}
-llama-index-llms-azure-openai = {version ="*", optional = true}
-llama-index-llms-gemini = {version ="*", optional = true}
-llama-index-embeddings-ollama = {version ="*", optional = true}
-llama-index-embeddings-huggingface = {version ="*", optional = true}
-llama-index-embeddings-openai = {version ="*", optional = true}
-llama-index-embeddings-azure-openai = {version ="*", optional = true}
-llama-index-embeddings-gemini = {version ="*", optional = true}
-llama-index-embeddings-mistralai = {version ="*", optional = true}
-llama-index-vector-stores-qdrant = {version ="*", optional = true}
-llama-index-vector-stores-milvus = {version ="*", optional = true}
-llama-index-vector-stores-chroma = {version ="*", optional = true}
-llama-index-vector-stores-postgres = {version ="*", optional = true}
-llama-index-vector-stores-clickhouse = {version ="*", optional = true}
-llama-index-storage-docstore-postgres = {version ="*", optional = true}
-llama-index-storage-index-store-postgres = {version ="*", optional = true}
-# Postgres
-psycopg2-binary = {version ="^2.9.9", optional = true}
-asyncpg = {version="^0.29.0", optional = true}
-
-# ClickHouse
-clickhouse-connect = {version = "^0.7.19", optional = true}
-
-# Optional Sagemaker dependency
-boto3 = {version ="^1.35.26", optional = true}
-
-# Optional Reranker dependencies
-torch = {version ="^2.4.1", optional = true}
-sentence-transformers = {version ="^3.1.1", optional = true}
-
-# Optional UI
-gradio = {version ="^4.44.0", optional = true}
-ffmpy = {version ="^0.4.0", optional = true}
-
-# Optional HF Transformers
-einops = {version = "^0.8.0", optional = true}
-retry-async = "^0.1.4"
-
-[tool.poetry.extras]
-ui = ["gradio", "ffmpy"]
-llms-llama-cpp = ["llama-index-llms-llama-cpp"]
-llms-openai = ["llama-index-llms-openai"]
-llms-openai-like = ["llama-index-llms-openai-like"]
-llms-ollama = ["llama-index-llms-ollama"]
-llms-sagemaker = ["boto3"]
-llms-azopenai = ["llama-index-llms-azure-openai"]
-llms-gemini = ["llama-index-llms-gemini"]
-embeddings-ollama = ["llama-index-embeddings-ollama"]
-embeddings-huggingface = ["llama-index-embeddings-huggingface", "einops"]
-embeddings-openai = ["llama-index-embeddings-openai"]
-embeddings-sagemaker = ["boto3"]
-embeddings-azopenai = ["llama-index-embeddings-azure-openai"]
-embeddings-gemini = ["llama-index-embeddings-gemini"]
-embeddings-mistral = ["llama-index-embeddings-mistralai"]
-vector-stores-qdrant = ["llama-index-vector-stores-qdrant"]
-vector-stores-clickhouse = ["llama-index-vector-stores-clickhouse", "clickhouse_connect"]
-vector-stores-chroma = ["llama-index-vector-stores-chroma"]
-vector-stores-postgres = ["llama-index-vector-stores-postgres"]
-vector-stores-milvus = ["llama-index-vector-stores-milvus"]
-storage-nodestore-postgres = ["llama-index-storage-docstore-postgres","llama-index-storage-index-store-postgres","psycopg2-binary","asyncpg"]
-rerank-sentence-transformers = ["torch", "sentence-transformers"]
-
-[tool.poetry.group.dev.dependencies]
-black = "^24"
-mypy = "^1.11"
-pre-commit = "^3"
-pytest = "^8"
-pytest-cov = "^5"
-ruff = "^0"
-pytest-asyncio = "^0.24.0"
-types-pyyaml = "^6.0.12.20240917"
-
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
-
-# Packages configs
-
-## coverage
-
-[tool.coverage.run]
-branch = true
-
-[tool.coverage.report]
-skip_empty = true
-precision = 2
-
-## black
-
-[tool.black]
-target-version = ['py311']
-
-## ruff
-# Recommended ruff config for now, to be updated as we go along.
-[tool.ruff]
-target-version = 'py311'
-
-# See all rules at https://beta.ruff.rs/docs/rules/
-lint.select = [
-    "E", # pycodestyle
-    "W", # pycodestyle
-    "F", # Pyflakes
-    "B", # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "D", # pydocstyle
-    "I", # isort
-    "SIM", # flake8-simplify
-    "TCH", # flake8-type-checking
-    "TID", # flake8-tidy-imports
-    "Q", # flake8-quotes
-    "UP", # pyupgrade
-    "PT", # flake8-pytest-style
-    "RUF", # Ruff-specific rules
-]
-
-lint.ignore = [
-    "E501", # "Line too long"
-    # -> line length already regulated by black
-    "PT011", # "pytest.raises() should specify expected exception"
-    # -> would imply to update tests every time you update exception message
-    "SIM102", # "Use a single `if` statement instead of nested `if` statements"
-    # -> too restrictive,
-    "D100",
-    "D101",
-    "D102",
-    "D103",
-    "D104",
-    "D105",
-    "D106",
-    "D107"
-    # -> "Missing docstring in public function too restrictive"
-]
-
-[tool.ruff.lint.pydocstyle]
-# Automatically disable rules that are incompatible with Google docstring convention
-convention = "google"
-
-[tool.ruff.lint.pycodestyle]
-max-doc-length = 88
-
-[tool.ruff.lint.flake8-tidy-imports]
-ban-relative-imports = "all"
-
-[tool.ruff.lint.flake8-type-checking]
-strict = true
-runtime-evaluated-base-classes = ["pydantic.BaseModel"]
-# Pydantic needs to be able to evaluate types at runtime
-# see https://pypi.org/project/flake8-type-checking/ for flake8-type-checking documentation
-# see https://beta.ruff.rs/docs/settings/#flake8-type-checking-runtime-evaluated-base-classes for ruff documentation
-
-[tool.ruff.lint.per-file-ignores]
-# Allow missing docstrings for tests
-"tests/**/*.py" = ["D1"]
-
-## mypy
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-check_untyped_defs = false
-explicit_package_bases = true
-warn_unused_ignores = false
-exclude = ["tests"]
-
-[tool.mypy-llama-index]
-ignore_missing_imports = true
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-addopts = [
-    "--import-mode=importlib",
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "accelerate>=1.11.0",
+    "aiohappyeyeballs>=2.6.1",
+    "aiohttp>=3.13.2",
+    "aiosignal>=1.4.0",
+    "annotated-types>=0.7.0",
+    "anyio>=4.11.0",
+    "asttokens>=3.0.0",
+    "asyncpg>=0.30.0",
+    "attrs>=25.4.0",
+    "audioread>=3.1.0",
+    "beautifulsoup4>=4.14.2",
+    "certifi>=2025.11.12",
+    "cffi>=2.0.0",
+    "charset-normalizer>=3.4.4",
+    "click>=8.3.0",
+    "colorama>=0.4.6",
+    "comm>=0.2.3",
+    "cryptography>=46.0.3",
+    "dataclasses-json>=0.6.7",
+    "decorator>=5.2.1",
+    "deprecated>=1.3.1",
+    "dirtyjson>=1.0.8",
+    "dnspython>=2.8.0",
+    "docx2txt>=0.9",
+    "email-validator>=2.3.0",
+    "executing>=2.2.1",
+    "faiss-cpu>=1.12.0",
+    "fastapi>=0.121.1",
+    "fastapi-cli>=0.0.16",
+    "fastapi-cloud-cli>=0.1.0",
+    "ffmpy>=1.0.0",
+    "filelock>=3.20.0",
+    "filetype>=1.2.0",
+    "frozenlist>=1.8.0",
+    "fsspec>=2025.10.0",
+    "gradio>=5.23.1",
+    "greenlet>=3.2.4",
+    "h11>=0.16.0",
+    "hf-xet>=1.2.0",
+    "httpcore>=1.0.9",
+    "httptools>=0.7.1",
+    "httpx>=0.26.0",
+    "huggingface-hub>=0.36.0",
+    "idna>=3.11",
+    "injector>=0.22.0",
+    "iprogress>=0.4",
+    "ipykernel>=7.1.0",
+    "ipython>=9.7.0",
+    "ipython-pygments-lexers>=1.1.1",
+    "ipywidgets>=8.1.8",
+    "itsdangerous>=2.2.0",
+    "jedi>=0.19.2",
+    "jinja2>=3.1.6",
+    "joblib>=1.5.2",
+    "jupyterlab-widgets>=3.0.16",
+    "lazy-loader>=0.4",
+    "librosa>=0.11.0",
+    "llama-index-core>=0.10.68.post1",
+    "llama-index-embeddings-ollama>=0.1.3",
+    "llama-index-llms-ollama>=0.1.6",
+    "llama-index-readers-file>=0.1.33",
+    "llama-index-storage-docstore-postgres>=0.1.3",
+    "llama-index-storage-index-store-postgres>=0.2.0",
+    "llama-index-vector-stores-qdrant>=0.2.17",
+    "llvmlite>=0.45.1",
+    "lxml>=6.0.2",
+    "markdown-it-py>=4.0.0",
+    "markupsafe>=3.0.3",
+    "marshmallow>=3.26.1",
+    "matplotlib-inline>=0.2.1",
+    "mdurl>=0.1.2",
+    "mpmath>=1.3.0",
+    "msgpack>=1.1.2",
+    "multidict>=6.7.0",
+    "mypy-extensions>=1.1.0",
+    "nest-asyncio>=1.6.0",
+    "networkx>=3.5",
+    "nltk>=3.9.2",
+    "numba>=0.62.1",
+    "numpy>=1.26.4",
+    "nvidia-cublas-cu12>=12.8.4.1",
+    "nvidia-cuda-cupti-cu12>=12.8.90",
+    "nvidia-cuda-nvrtc-cu12>=12.8.93",
+    "nvidia-cuda-runtime-cu12>=12.8.90",
+    "nvidia-cudnn-cu12>=9.10.2.21",
+    "nvidia-cufft-cu12>=11.3.3.83",
+    "nvidia-cufile-cu12>=1.13.1.3",
+    "nvidia-curand-cu12>=10.3.9.90",
+    "nvidia-cusolver-cu12>=11.7.3.90",
+    "nvidia-cusparse-cu12>=12.5.8.93",
+    "nvidia-cusparselt-cu12>=0.7.1",
+    "nvidia-nccl-cu12>=2.27.3",
+    "nvidia-nvjitlink-cu12>=12.8.93",
+    "nvidia-nvshmem-cu12>=3.4.5",
+    "nvidia-nvtx-cu12>=12.8.90",
+    "ollama-python>=0.1.2",
+    "orjson>=3.11.4",
+    "packaging>=25.0",
+    "pandas>=2.3.3",
+    "parso>=0.8.5",
+    "pexpect>=4.9.0",
+    "pillow>=11.3.0",
+    "platformdirs>=4.5.0",
+    "pooch>=1.8.2",
+    "prompt-toolkit>=3.0.52",
+    "propcache>=0.4.1",
+    "psutil>=7.1.3",
+    "psycopg2-binary>=2.9.11",
+    "ptyprocess>=0.7.0",
+    "pure-eval>=0.2.3",
+    "pycparser>=2.23",
+    "pydantic>=2.12.4",
+    "pydantic-core>=2.41.5",
+    "pydantic-extra-types>=2.10.6",
+    "pydantic-settings>=2.12.0",
+    "pydub>=0.25.1",
+    "pygments>=2.19.2",
+    "pypdf>=4.3.1",
+    "pytesseract>=0.3.13",
+    "python-dateutil>=2.9.0.post0",
+    "python-dotenv>=1.2.1",
+    "python-multipart>=0.0.20",
+    "python-pptx>=1.0.2",
+    "pytz>=2025.2",
+    "pyyaml>=6.0.3",
+    "regex>=2025.11.3",
+    "requests>=2.32.5",
+    "retry-async>=0.1.4",
+    "rich>=14.2.0",
+    "rich-toolkit>=0.15.1",
+    "rignore>=0.7.6",
+    "ruff>=0.14.4",
+    "safetensors>=0.6.2",
+    "scikit-learn>=1.7.2",
+    "scipy>=1.16.3",
+    "sentence-transformers>=5.1.2",
+    "sentencepiece>=0.2.1",
+    "sentry-sdk>=2.44.0",
+    "setuptools>=80.9.0",
+    "shellingham>=1.5.4",
+    "six>=1.17.0",
+    "sniffio>=1.3.1",
+    "soundfile>=0.13.1",
+    "soupsieve>=2.8",
+    "soxr>=1.0.0",
+    "sqlalchemy>=2.0.44",
+    "stack-data>=0.6.3",
+    "starlette>=0.49.3",
+    "striprtf>=0.0.26",
+    "sympy>=1.14.0",
+    "tenacity>=8.5.0",
+    "threadpoolctl>=3.6.0",
+    "tiktoken>=0.12.0",
+    "tokenizers>=0.22.1",
+    "torch>=2.8.0",
+    "tqdm>=4.67.1",
+    "traitlets>=5.14.3",
+    "transformers>=4.57.1",
+    "triton>=3.4.0",
+    "typer>=0.20.0",
+    "typing-extensions>=4.15.0",
+    "typing-inspect>=0.9.0",
+    "typing-inspection>=0.4.2",
+    "tzdata>=2025.2",
+    "ujson>=5.11.0",
+    "urllib3>=2.5.0",
+    "uvicorn>=0.38.0",
+    "uvloop>=0.22.1",
+    "watchdog>=6.0.0",
+    "watchfiles>=1.1.1",
+    "wcwidth>=0.2.14",
+    "websockets>=15.0.1",
+    "widgetsnbextension>=4.0.15",
+    "wrapt>=2.0.1",
+    "xlsxwriter>=3.2.9",
+    "yarl>=1.22.0",
 ]

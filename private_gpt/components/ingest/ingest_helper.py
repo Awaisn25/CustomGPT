@@ -1,15 +1,17 @@
 import logging
 from pathlib import Path
+from typing import Optional, Dict, List
 
 from llama_index.core.readers import StringIterableReader
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.readers.json import JSONReader
 from llama_index.core.schema import Document
 
+from private_gpt.components.readers.custom_readers import CustomImageReader
+
 logger = logging.getLogger(__name__)
 
 
-# Inspired by the `llama_index.core.readers.file.base` module
 def _try_loading_included_file_formats() -> dict[str, type[BaseReader]]:
     try:
         from llama_index.readers.file.docs import (  # type: ignore
@@ -37,9 +39,9 @@ def _try_loading_included_file_formats() -> dict[str, type[BaseReader]]:
         ".pptx": PptxReader,
         ".ppt": PptxReader,
         ".pptm": PptxReader,
-        ".jpg": ImageReader,
-        ".png": ImageReader,
-        ".jpeg": ImageReader,
+        ".jpg": CustomImageReader,
+        ".png": CustomImageReader,
+        ".jpeg": CustomImageReader,
         ".mp3": VideoAudioReader,
         ".mp4": VideoAudioReader,
         ".csv": PandasCSVReader,

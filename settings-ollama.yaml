@@ -11,8 +11,8 @@ embedding:
   mode: ollama
 
 ollama:
-  llm_model: llama3.1
-  embedding_model: nomic-embed-text
+  llm_model: gemma3:4b-it-qat
+  embedding_model: embeddinggemma:latest
   api_base: http://localhost:11434
   embedding_api_base: http://localhost:11434  # change if your embedding model runs on another ollama
   keep_alive: 5m
@@ -27,4 +27,5 @@ vectorstore:
   database: qdrant
 
 qdrant:
-  path: local_data/private_gpt/qdrant
+  # path: local_data/private_gpt/qdrant
+  url: http://localhost:6333

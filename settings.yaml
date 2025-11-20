@@ -18,7 +18,7 @@ server:
 
 data:
   local_ingestion:
-    enabled: ${LOCAL_INGESTION_ENABLED:false}
+    enabled: ${LOCAL_INGESTION_ENABLED:true}
     allow_ingest_from: ["*"]
   local_data_folder: local_data/private_gpt
 
@@ -45,6 +45,10 @@ ui:
     any unnecessary information or repetition.
   delete_file_button_enabled: true
   delete_all_files_button_enabled: true
+  # List of Ollama model names to show in the dropdown for hot-swapping
+  dropdown_models:
+    - qwen3-vl:2b
+    - gemma3:4b-it-qat
 
 llm:
   mode: llamacpp
@@ -57,7 +61,7 @@ llm:
   temperature: 0.1      # The temperature of the model. Increasing the temperature will make the model answer more creatively. A value of 0.1 would be more factual. (Default: 0.1)
 
 rag:
-  similarity_top_k: 2
+  similarity_top_k: 10
   #This value controls how many "top" documents the RAG returns to use in the context.
   #similarity_value: 0.45
   #This value is disabled by default.  If you enable this settings, the RAG will only use articles that meet a certain percentage score.
@@ -88,6 +92,7 @@ embedding:
   # Should be matching the value above in most cases
   mode: huggingface
   ingest_mode: simple
+  count_workers: 8
   embed_dim: 768 # 768 is for nomic-ai/nomic-embed-text-v1.5
 
 huggingface:
@@ -109,7 +114,8 @@ milvus:
   overwrite: false
 
 qdrant:
-  path: local_data/private_gpt/qdrant
+  # path: local_data/private_gpt/qdrant
+  url: http://localhost:6333
 
 postgres:
   host: localhost

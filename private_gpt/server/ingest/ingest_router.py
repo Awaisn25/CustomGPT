@@ -20,6 +20,10 @@ class IngestTextBody(BaseModel):
             "Chinese martial arts."
         ]
     )
+    collection_name: str | None = Field(
+        None,
+        description="Optional collection name. If not provided, uses default collection.",
+    )
 
 
 class IngestResponse(BaseModel):
@@ -38,7 +42,11 @@ def ingest(request: Request, file: UploadFile) -> IngestResponse:
 
 
 @ingest_router.post("/ingest/file", tags=["Ingestion"])
-def ingest_file(request: Request, file: UploadFile) -> IngestResponse:
+def ingest_file(
+    request: Request,
+    file: UploadFile,
+    collection_name: str | None = None,
+) -> IngestResponse:
     """Ingests and processes a file, storing its chunks to be used as context.
 
     The context obtained from files is later used in
@@ -53,11 +61,16 @@ def ingest_file(request: Request, file: UploadFile) -> IngestResponse:
     extracted Metadata (which is later used to improve context retrieval). Those IDs
     can be used to filter the context used to create responses in
     `/chat/completions`, `/completions`, and `/chunks` APIs.
+
+    If `collection_name` is not provided, the collection will be auto-detected based on
+    the file path (if available) or default collection will be used.
     """
     service = request.state.injector.get(IngestService)
     if file.filename is None:
         raise HTTPException(400, "No file name provided")
-    ingested_documents = service.ingest_bin_data(file.filename, file.file)
+    ingested_documents = service.ingest_bin_data(
+        file.filename, file.file, collection_name=collection_name
+    )
     return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
 
 
@@ -73,32 +86,46 @@ def ingest_text(request: Request, body: IngestTextBody) -> IngestResponse:
     extracted Metadata (which is later used to improve context retrieval). That ID
     can be used to filter the context used to create responses in
     `/chat/completions`, `/completions`, and `/chunks` APIs.
+
+    If `collection_name` is not provided in the body, the default collection will be used.
     """
     service = request.state.injector.get(IngestService)
     if len(body.file_name) == 0:
         raise HTTPException(400, "No file name provided")
-    ingested_documents = service.ingest_text(body.file_name, body.text)
+    ingested_documents = service.ingest_text(
+        body.file_name, body.text, collection_name=body.collection_name
+    )
     return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
 
 
 @ingest_router.get("/ingest/list", tags=["Ingestion"])
-def list_ingested(request: Request) -> IngestResponse:
+def list_ingested(
+    request: Request, collection_name: str | None = None
+) -> IngestResponse:
     """Lists already ingested Documents including their Document ID and metadata.
 
     Those IDs can be used to filter the context used to create responses
     in `/chat/completions`, `/completions`, and `/chunks` APIs.
+
+    If `collection_name` is provided, only documents from that collection are returned.
+    Otherwise, all documents are returned.
     """
     service = request.state.injector.get(IngestService)
-    ingested_documents = service.list_ingested()
+    ingested_documents = service.list_ingested(collection_name=collection_name)
     return IngestResponse(object="list", model="private-gpt", data=ingested_documents)
 
 
 @ingest_router.delete("/ingest/{doc_id}", tags=["Ingestion"])
-def delete_ingested(request: Request, doc_id: str) -> None:
+def delete_ingested(
+    request: Request, doc_id: str, collection_name: str | None = None
+) -> None:
     """Delete the specified ingested Document.
 
     The `doc_id` can be obtained from the `GET /ingest/list` endpoint.
     The document will be effectively deleted from your storage context.
+
+    If `collection_name` is provided, the document will be deleted from that collection.
+    Otherwise, the default collection will be used.
     """
     service = request.state.injector.get(IngestService)
-    service.delete(doc_id)
+    service.delete(doc_id, collection_name=collection_name)

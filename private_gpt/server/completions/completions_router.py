@@ -20,6 +20,7 @@ class CompletionsBody(BaseModel):
     context_filter: ContextFilter | None = None
     include_sources: bool = True
     stream: bool = False
+    collection_name: str | None = None
 
     model_config = {
         "json_schema_extra": {
@@ -88,5 +89,6 @@ def prompt_completion(
         stream=body.stream,
         include_sources=body.include_sources,
         context_filter=body.context_filter,
+        collection_name=body.collection_name,
     )
     return chat_completion(request, chat_body)

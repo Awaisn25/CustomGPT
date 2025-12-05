@@ -94,6 +94,31 @@ class ServerSettings(BaseModel):
     )
 
 
+class DataPathsSettings(BaseModel):
+    """Configuration for persistent and temporary data paths.
+
+    Persistent path (D:/) contains documents that should remain on disk.
+    Temporary path (E:/) contains documents that are analyzed and can be removed.
+    """
+
+    persistent_path: str = Field(
+        "D:/",
+        description="Path to persistent storage (e.g., D:/ on Windows). Documents here remain on disk.",
+    )
+    temporary_path: str = Field(
+        "E:/",
+        description="Path to temporary storage (e.g., E:/ on Windows). Documents here are analyzed and can be removed.",
+    )
+    persistent_collection_name: str = Field(
+        "persistent_docs",
+        description="Collection name for documents in the persistent path.",
+    )
+    temporary_collection_name: str = Field(
+        "temporary_docs",
+        description="Collection name for documents in the temporary path.",
+    )
+
+
 class DataSettings(BaseModel):
     local_ingestion: IngestionSettings = Field(
         description="Ingestion configuration",
@@ -102,6 +127,10 @@ class DataSettings(BaseModel):
     local_data_folder: str = Field(
         description="Path to local storage."
         "It will be treated as an absolute path if it starts with /"
+    )
+    paths: DataPathsSettings = Field(
+        description="Configuration for persistent and temporary data paths",
+        default_factory=DataPathsSettings,
     )
 
 
@@ -154,6 +183,10 @@ class LLMSettings(BaseModel):
 
 class VectorstoreSettings(BaseModel):
     database: Literal["chroma", "qdrant", "postgres", "clickhouse", "milvus"]
+    default_collection_name: str = Field(
+        "default_collection",
+        description="Default collection name to use when no collection is specified. Used for backward compatibility.",
+    )
 
 
 class NodeStoreSettings(BaseModel):

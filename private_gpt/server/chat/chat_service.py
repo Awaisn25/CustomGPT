@@ -9,6 +9,7 @@ from llama_index.core.chat_engine.types import (
 from llama_index.core.indices import VectorStoreIndex
 from llama_index.core.indices.postprocessor import MetadataReplacementPostProcessor
 from llama_index.core.llms import ChatMessage, MessageRole
+from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.postprocessor import (
     SentenceTransformerRerank,
     SimilarityPostprocessor,
@@ -151,6 +152,7 @@ class ChatService:
                 context_filter=context_filter,
                 similarity_top_k=self.settings.rag.similarity_top_k,
             )
+            # memory = ChatMemoryBuffer.from_defaults(token_limit=8192)  # <-- MORE TOKENS
             node_postprocessors: list[BaseNodePostprocessor] = [
                 MetadataReplacementPostProcessor(target_metadata_key="window"),
             ]
@@ -172,10 +174,12 @@ class ChatService:
                 retriever=vector_index_retriever,
                 llm=self.llm_component.llm,  # Takes no effect at the moment
                 node_postprocessors=node_postprocessors,
+                # memory=memory
             )
         else:
             return SimpleChatEngine.from_defaults(
                 system_prompt=system_prompt,
+                # memory=memory,
                 llm=self.llm_component.llm,
             )
 

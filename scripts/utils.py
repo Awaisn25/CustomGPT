@@ -110,39 +110,42 @@ class Chroma:
 
 
 class Qdrant:
-    COLLECTION = (
-        "make_this_parameterizable_per_api_call"  # ?! see vector_store_component.py
-    )
-
     def __init__(self) -> None:
         try:
             from qdrant_client import QdrantClient  # type: ignore
         except ImportError:
             raise ImportError("Qdrant dependencies not found") from None
         self.client = QdrantClient(**settings().qdrant.model_dump(exclude_none=True))
+        # Get all collection names from settings
+        self._collection_names = [
+            settings().vectorstore.default_collection_name,
+            settings().data.paths.persistent_collection_name,
+            settings().data.paths.temporary_collection_name,
+        ]
 
     def wipe(self, store_type: str) -> None:
         assert store_type == "vectorstore"
-        try:
-            self.client.delete_collection(self.COLLECTION)
-            print("Collection dropped successfully.")
-        except Exception as e:
-            print("Error dropping collection:", e)
+        for collection_name in self._collection_names:
+            try:
+                self.client.delete_collection(collection_name)
+                print(f"Collection '{collection_name}' dropped successfully.")
+            except Exception as e:
+                print(f"Error dropping collection '{collection_name}': {e}")
 
     def stats(self, store_type: str) -> None:
         print(f"Storage for Qdrant {store_type}.")
-        try:
-            collection_data = self.client.get_collection(self.COLLECTION)
-            if collection_data:
-                # Collection Info
-                # https://qdrant.tech/documentation/concepts/collections/
-                print(f"\tPoints:        {collection_data.points_count:,}")
-                print(f"\tVectors:       {collection_data.vectors_count:,}")
-                print(f"\tIndex Vectors: {collection_data.indexed_vectors_count:,}")
-                return
-        except ValueError:
-            pass
-        print("\t- Qdrant collection not found or empty")
+        for collection_name in self._collection_names:
+            try:
+                collection_data = self.client.get_collection(collection_name)
+                if collection_data:
+                    # Collection Info
+                    # https://qdrant.tech/documentation/concepts/collections/
+                    print(f"\nCollection: {collection_name}")
+                    print(f"\tPoints:        {collection_data.points_count:,}")
+                    print(f"\tVectors:       {collection_data.vectors_count:,}")
+                    print(f"\tIndex Vectors: {collection_data.indexed_vectors_count:,}")
+            except ValueError:
+                print(f"\t- Qdrant collection '{collection_name}' not found or empty")
 
 
 class Command:

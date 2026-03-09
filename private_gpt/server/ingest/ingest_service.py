@@ -225,14 +225,15 @@ class IngestService:
             all_documents = []
             for coll_name, coll_files in files_by_collection.items():
                 ingest_component = self._get_ingest_component(coll_name)
-                documents = ingest_component.bulk_ingest(coll_files)
+                documents = ingest_component.bulk_ingest(coll_files, collection_name=coll_name)
                 all_documents.extend(documents)
             logger.info("Finished bulk ingestion")
             return [IngestedDoc.from_document(doc) for doc in all_documents]
         else:
             # All files go to the same collection
             ingest_component = self._get_ingest_component(collection_name)
-            documents = ingest_component.bulk_ingest(files)
+            is_temporary = True if collection_name == self.settings.data.paths.temporary_collection_name else False
+            documents = ingest_component.bulk_ingest(files, collection_name=collection_name, is_temporary=is_temporary)
             logger.info("Finished bulk ingestion into collection=%s", collection_name)
             return [IngestedDoc.from_document(document) for document in documents]
 
@@ -313,3 +314,82 @@ class IngestService:
                 self.settings.vectorstore.default_collection_name
             )
             ingest_component.delete(doc_id)
+
+    def get_document_file_path(
+        self, doc_id: str, collection_name: str | None = None
+    ) -> Path:
+        """Get the file path for a document by its ID.
+
+        Args:
+            doc_id: Document ID to look up
+            collection_name: Optional collection name. If not provided, searches default collection.
+
+        Returns:
+            Path to the source file
+
+        Raises:
+            ValueError: If document not found or source_path not available
+            FileNotFoundError: If the file no longer exists on disk
+            PermissionError: If the file path is outside allowed directories
+        """
+        # Get the document metadata
+        if collection_name:
+            storage_context = self._get_storage_context(collection_name)
+        else:
+            storage_context = self._get_storage_context(
+                self.settings.vectorstore.default_collection_name
+            )
+
+        docstore = storage_context.docstore
+        ref_doc_info = docstore.get_ref_doc_info(doc_id)
+
+        if ref_doc_info is None or ref_doc_info.metadata is None:
+            raise ValueError(f"Document with ID {doc_id} not found")
+
+        # Extract source_path from metadata
+        source_path_str = ref_doc_info.metadata.get("source_path")
+        if not source_path_str:
+            raise ValueError(
+                f"Document {doc_id} does not have a source_path in metadata"
+            )
+
+        source_path = Path(source_path_str).resolve()
+
+        # Security validation: ensure path is within allowed directories
+        persistent_path = Path(self.settings.data.paths.persistent_path).resolve()
+        temporary_path = Path(self.settings.data.paths.temporary_path).resolve()
+
+        is_in_persistent = False
+        is_in_temporary = False
+
+        try:
+            source_path.relative_to(persistent_path)
+            is_in_persistent = True
+        except ValueError:
+            pass
+
+        try:
+            source_path.relative_to(temporary_path)
+            is_in_temporary = True
+        except ValueError:
+            pass
+
+        if not (is_in_persistent or is_in_temporary):
+            logger.warning(
+                "Attempted to access file outside allowed paths: %s", source_path
+            )
+            raise PermissionError(
+                f"File path is outside allowed directories: {source_path}"
+            )
+
+        # Verify file exists
+        if not source_path.exists():
+            raise FileNotFoundError(
+                f"Source file no longer exists: {source_path}"
+            )
+
+        if not source_path.is_file():
+            raise ValueError(f"Path is not a file: {source_path}")
+
+        logger.debug("Retrieved file path for doc_id=%s: %s", doc_id, source_path)
+        return source_path

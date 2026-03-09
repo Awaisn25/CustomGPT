@@ -126,11 +126,11 @@ class SimpleIngestComponent(BaseIngestComponentWithIndex):
         logger.debug("Saving the documents in the index and doc store")
         return self._save_docs(documents)
 
-    def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[Document]:
+    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None, is_temporary: bool | None = None) -> list[Document]:
         saved_documents = []
         for file_name, file_data in files:
             documents = IngestionHelper.transform_file_into_documents(
-                file_name, file_data
+                file_name, file_data, collection_name=collection_name, is_temporary=is_temporary
             )
             saved_documents.extend(self._save_docs(documents))
         return saved_documents
@@ -184,7 +184,7 @@ class BatchIngestComponent(BaseIngestComponentWithIndex):
         logger.debug("Saving the documents in the index and doc store")
         return self._save_docs(documents)
 
-    def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[Document]:
+    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None) -> list[Document]:
         documents = list(
             itertools.chain.from_iterable(
                 self._file_to_documents_work_pool.starmap(
@@ -270,7 +270,7 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
         logger.debug("Saving the documents in the index and doc store")
         return self._save_docs(documents)
 
-    def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[Document]:
+    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None) -> list[Document]:
         # Lightweight threads, used for parallelize the
         # underlying IO calls made in the ingestion
 
@@ -465,7 +465,7 @@ class PipelineIngestComponent(BaseIngestComponentWithIndex):
         self._flush()
         return documents
 
-    def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[Document]:
+    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None) -> list[Document]:
         docs = []
         for file_name, file_data in eta(files):
             try:

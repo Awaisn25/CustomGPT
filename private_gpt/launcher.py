@@ -1,5 +1,6 @@
 """FastAPI app creation, logger configuration and main API routes."""
 
+import atexit
 import logging
 
 from fastapi import Depends, FastAPI, Request
@@ -15,6 +16,8 @@ from private_gpt.server.completions.completions_router import completions_router
 from private_gpt.server.embeddings.embeddings_router import embeddings_router
 from private_gpt.server.health.health_router import health_router
 from private_gpt.server.ingest.ingest_router import ingest_router
+from private_gpt.server.ingest.ingest_service import IngestService
+from private_gpt.server.ingest.watched_path_manager import WatchedPathManager
 from private_gpt.server.recipes.summarize.summarize_router import summarize_router
 from private_gpt.settings.settings import Settings
 
@@ -66,4 +69,52 @@ def create_app(root_injector: Injector) -> FastAPI:
         ui = root_injector.get(PrivateGptUi)
         ui.mount_in_app(app, settings.ui.path)
 
+    # Initialize file watchers for automatic ingestion/deletion
+    _initialize_file_watchers(root_injector, settings)
+
     return app
+
+
+def _initialize_file_watchers(root_injector: Injector, settings: Settings) -> None:
+    """Initialize file watchers for automatic ingestion and deletion.
+
+    This starts watchers for configured paths if enabled in settings.
+    Watchers are automatically stopped when the application shuts down.
+    """
+    if not settings.data.paths.watch_enabled:
+        logger.debug("File watching is disabled in settings")
+        return
+
+    try:
+        # Get the services
+        watched_path_manager = root_injector.get(WatchedPathManager)
+        ingest_service = root_injector.get(IngestService)
+
+        # Set up the ingest service reference
+        watched_path_manager.set_ingest_service(ingest_service)
+
+        # Start configured watchers
+        watched_path_manager.start_configured_watchers()
+
+        # Sync existing files if enabled
+        if settings.data.paths.sync_on_startup:
+            logger.info("Syncing existing files in watched paths...")
+            watched_path_manager.sync_existing_files(
+                watch_path=settings.data.paths.temporary_path,
+                collection_name=settings.data.paths.temporary_collection_name,
+            )
+
+        # Register cleanup on application shutdown
+        def cleanup_watchers() -> None:
+            logger.info("Shutting down file watchers...")
+            watched_path_manager.stop_all_watchers()
+
+        atexit.register(cleanup_watchers)
+
+        logger.info("File watchers initialized successfully")
+    except Exception as e:
+        logger.error(
+            f"Failed to initialize file watchers: {e}. "
+            "File watching will be disabled.",
+            exc_info=True,
+        )

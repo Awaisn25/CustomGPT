@@ -71,11 +71,33 @@ class IngestionHelper:
 
     @staticmethod
     def transform_file_into_documents(
-        file_name: str, file_data: Path
+        file_name: str,
+        file_data: Path,
+        collection_name: str | None = None,
+        is_temporary: bool | None = None,
     ) -> list[Document]:
+        """Transform a file into a list of documents with enhanced metadata.
+
+        Args:
+            file_name: Name of the file
+            file_data: Path to the file
+            collection_name: Optional collection name for metadata
+            is_temporary: Optional flag indicating if this is a temporary document
+
+        Returns:
+            List of documents with metadata
+        """
         documents = IngestionHelper._load_file_to_documents(file_name, file_data)
         for document in documents:
             document.metadata["file_name"] = file_name
+            # Add enhanced metadata
+            document.metadata["source_path"] = str(file_data.resolve())
+            if collection_name is not None:
+                document.metadata["collection_name"] = collection_name
+            if is_temporary is not None:
+                document.metadata["is_temporary"] = is_temporary
+            # Remove surrogates and replace with the unicode replacement character to avoid encoding errors
+            document.text = document.text.encode("utf-8", errors="replace").decode("utf-8")
         IngestionHelper._exclude_metadata(documents)
         return documents
 
@@ -108,6 +130,18 @@ class IngestionHelper:
         for document in documents:
             document.metadata["doc_id"] = document.doc_id
             # We don't want the Embeddings search to receive this metadata
-            document.excluded_embed_metadata_keys = ["doc_id"]
+            document.excluded_embed_metadata_keys = [
+                "doc_id",
+                "source_path",
+                "collection_name",
+                "is_temporary",
+            ]
             # We don't want the LLM to receive these metadata in the context
-            document.excluded_llm_metadata_keys = ["file_name", "doc_id", "page_label"]
+            document.excluded_llm_metadata_keys = [
+                "file_name",
+                "doc_id",
+                "page_label",
+                "source_path",
+                "collection_name",
+                "is_temporary",
+            ]

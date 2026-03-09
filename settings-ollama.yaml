@@ -25,6 +25,7 @@ ollama:
 
 vectorstore:
   database: qdrant
+  default_collection_name: make_this_parameterizable_per_api_call
 
 qdrant:
   # path: local_data/private_gpt/qdrant

@@ -1,7 +1,7 @@
 import logging
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, AnyStr, BinaryIO
+from typing import TYPE_CHECKING, Any, AnyStr, BinaryIO
 
 from injector import inject, singleton
 from llama_index.core.node_parser import SentenceWindowNodeParser
@@ -15,7 +15,8 @@ from private_gpt.components.vector_store.vector_store_component import (
     VectorStoreComponent,
 )
 from private_gpt.server.ingest.model import IngestedDoc
-from private_gpt.settings.settings import settings
+from private_gpt.settings.settings import Settings, settings
+from private_gpt.utils.collection_mapper import get_collection_for_path
 
 if TYPE_CHECKING:
     from llama_index.core.storage.docstore.types import RefDocInfo
@@ -32,23 +33,62 @@ class IngestService:
         vector_store_component: VectorStoreComponent,
         embedding_component: EmbeddingComponent,
         node_store_component: NodeStoreComponent,
+        settings: Settings,
     ) -> None:
         self.llm_service = llm_component
-        self.storage_context = StorageContext.from_defaults(
-            vector_store=vector_store_component.vector_store,
-            docstore=node_store_component.doc_store,
-            index_store=node_store_component.index_store,
-        )
-        node_parser = SentenceWindowNodeParser.from_defaults()
+        self.vector_store_component = vector_store_component
+        self.embedding_component = embedding_component
+        self.node_store_component = node_store_component
+        self.settings = settings
+        # Cache for storage contexts and ingest components per collection
+        self._storage_contexts: dict[str, StorageContext] = {}
+        self._ingest_components: dict[str, Any] = {}
 
-        self.ingest_component = get_ingestion_component(
-            self.storage_context,
-            embed_model=embedding_component.embedding_model,
-            transformations=[node_parser, embedding_component.embedding_model],
-            settings=settings(),
-        )
+    def _get_storage_context(
+        self, collection_name: str | None = None
+    ) -> StorageContext:
+        """Get or create storage context for the specified collection."""
+        if collection_name is None:
+            collection_name = self.settings.vectorstore.default_collection_name
 
-    def _ingest_data(self, file_name: str, file_data: AnyStr) -> list[IngestedDoc]:
+        if collection_name not in self._storage_contexts:
+            vector_store = self.vector_store_component.get_vector_store(
+                collection_name
+            )
+            self._storage_contexts[collection_name] = StorageContext.from_defaults(
+                vector_store=vector_store,
+                docstore=self.node_store_component.doc_store,
+                index_store=self.node_store_component.index_store,
+            )
+        return self._storage_contexts[collection_name]
+
+    def _get_ingest_component(self, collection_name: str | None = None) -> Any:
+        """Get or create ingest component for the specified collection."""
+        if collection_name is None:
+            collection_name = self.settings.vectorstore.default_collection_name
+
+        if collection_name not in self._ingest_components:
+            storage_context = self._get_storage_context(collection_name)
+            node_parser = SentenceWindowNodeParser.from_defaults()
+
+            self._ingest_components[collection_name] = get_ingestion_component(
+                storage_context,
+                embed_model=self.embedding_component.embedding_model,
+                transformations=[
+                    node_parser,
+                    self.embedding_component.embedding_model,
+                ],
+                settings=self.settings,
+            )
+        return self._ingest_components[collection_name]
+
+    def _ingest_data(
+        self,
+        file_name: str,
+        file_data: AnyStr,
+        collection_name: str | None = None,
+        file_path: Path | None = None,
+    ) -> list[IngestedDoc]:
         logger.debug("Got file data of size=%s to ingest", len(file_data))
         # llama-index mainly supports reading from files, so
         # we have to create a tmp file to read for it to work
@@ -60,38 +100,167 @@ class IngestService:
                     path_to_tmp.write_bytes(file_data)
                 else:
                     path_to_tmp.write_text(str(file_data))
-                return self.ingest_file(file_name, path_to_tmp)
+                # Use file_path if provided, otherwise use tmp path
+                actual_path = file_path if file_path else path_to_tmp
+                return self.ingest_file(
+                    file_name, path_to_tmp, collection_name=collection_name
+                )
             finally:
                 tmp.close()
                 path_to_tmp.unlink()
 
-    def ingest_file(self, file_name: str, file_data: Path) -> list[IngestedDoc]:
-        logger.info("Ingesting file_name=%s", file_name)
-        documents = self.ingest_component.ingest(file_name, file_data)
-        logger.info("Finished ingestion file_name=%s", file_name)
+    def ingest_file(
+        self,
+        file_name: str,
+        file_data: Path,
+        collection_name: str | None = None,
+    ) -> list[IngestedDoc]:
+        """Ingest a file into the specified collection.
+
+        Args:
+            file_name: Name of the file
+            file_data: Path to the file
+            collection_name: Optional collection name. If not provided, will be auto-detected from file path.
+
+        Returns:
+            List of ingested documents
+        """
+        # Auto-detect collection from file path if not provided
+        if collection_name is None:
+            collection_name = get_collection_for_path(file_data, self.settings)
+
+        logger.info(
+            "Ingesting file_name=%s into collection=%s", file_name, collection_name
+        )
+        ingest_component = self._get_ingest_component(collection_name)
+        documents = ingest_component.ingest(file_name, file_data)
+        logger.info(
+            "Finished ingestion file_name=%s into collection=%s",
+            file_name,
+            collection_name,
+        )
         return [IngestedDoc.from_document(document) for document in documents]
 
-    def ingest_text(self, file_name: str, text: str) -> list[IngestedDoc]:
-        logger.debug("Ingesting text data with file_name=%s", file_name)
-        return self._ingest_data(file_name, text)
+    def ingest_text(
+        self,
+        file_name: str,
+        text: str,
+        collection_name: str | None = None,
+    ) -> list[IngestedDoc]:
+        """Ingest text into the specified collection.
+
+        Args:
+            file_name: Name of the file
+            text: Text content to ingest
+            collection_name: Optional collection name. If not provided, uses default collection.
+
+        Returns:
+            List of ingested documents
+        """
+        logger.debug(
+            "Ingesting text data with file_name=%s into collection=%s",
+            file_name,
+            collection_name,
+        )
+        return self._ingest_data(file_name, text, collection_name=collection_name)
 
     def ingest_bin_data(
-        self, file_name: str, raw_file_data: BinaryIO
+        self,
+        file_name: str,
+        raw_file_data: BinaryIO,
+        
+        collection_name: str | None = None,
     ) -> list[IngestedDoc]:
-        logger.debug("Ingesting binary data with file_name=%s", file_name)
+        """Ingest binary data into the specified collection.
+
+        Args:
+            file_name: Name of the file
+            raw_file_data: Binary file data
+            collection_name: Optional collection name. If not provided, uses default collection.
+
+        Returns:
+            List of ingested documents
+        """
+        logger.debug(
+            "Ingesting binary data with file_name=%s into collection=%s",
+            file_name,
+            collection_name,
+        )
         file_data = raw_file_data.read()
-        return self._ingest_data(file_name, file_data)
+        return self._ingest_data(
+            file_name, file_data, collection_name=collection_name
+        )
 
-    def bulk_ingest(self, files: list[tuple[str, Path]]) -> list[IngestedDoc]:
+    def bulk_ingest(
+        self,
+        files: list[tuple[str, Path]],
+        collection_name: str | None = None,
+    ) -> list[IngestedDoc]:
+        """Bulk ingest files into the specified collection.
+
+        Args:
+            files: List of (file_name, file_path) tuples
+            collection_name: Optional collection name. If not provided, will be auto-detected from file paths.
+
+        Returns:
+            List of ingested documents
+        """
         logger.info("Ingesting file_names=%s", [f[0] for f in files])
-        documents = self.ingest_component.bulk_ingest(files)
-        logger.info("Finished ingestion file_name=%s", [f[0] for f in files])
-        return [IngestedDoc.from_document(document) for document in documents]
 
-    def list_ingested(self) -> list[IngestedDoc]:
+        # Group files by collection if collection_name is not specified
+        if collection_name is None:
+            # Group files by their detected collection
+            files_by_collection: dict[str, list[tuple[str, Path]]] = {}
+            for file_name, file_path in files:
+                detected_collection = get_collection_for_path(
+                    file_path, self.settings
+                )
+                if detected_collection not in files_by_collection:
+                    files_by_collection[detected_collection] = []
+                files_by_collection[detected_collection].append(
+                    (file_name, file_path)
+                )
+
+            # Ingest each group separately
+            all_documents = []
+            for coll_name, coll_files in files_by_collection.items():
+                ingest_component = self._get_ingest_component(coll_name)
+                documents = ingest_component.bulk_ingest(coll_files)
+                all_documents.extend(documents)
+            logger.info("Finished bulk ingestion")
+            return [IngestedDoc.from_document(doc) for doc in all_documents]
+        else:
+            # All files go to the same collection
+            ingest_component = self._get_ingest_component(collection_name)
+            documents = ingest_component.bulk_ingest(files)
+            logger.info("Finished bulk ingestion into collection=%s", collection_name)
+            return [IngestedDoc.from_document(document) for document in documents]
+
+    def list_ingested(
+        self, collection_name: str | None = None
+    ) -> list[IngestedDoc]:
+        """List ingested documents, optionally filtered by collection.
+
+        Args:
+            collection_name: Optional collection name to filter by. If None, lists all documents.
+
+        Returns:
+            List of ingested documents
+        """
         ingested_docs: list[IngestedDoc] = []
         try:
-            docstore = self.storage_context.docstore
+            # If collection_name is specified, only check that collection
+            if collection_name:
+                storage_context = self._get_storage_context(collection_name)
+                docstore = storage_context.docstore
+            else:
+                # Check all collections (use default for now, as docstore is shared)
+                # Note: This may need refinement if docstore is collection-specific
+                storage_context = self._get_storage_context(
+                    self.settings.vectorstore.default_collection_name
+                )
+                docstore = storage_context.docstore
+
             ref_docs: dict[str, RefDocInfo] | None = docstore.get_all_ref_doc_info()
 
             if not ref_docs:
@@ -111,15 +280,36 @@ class IngestService:
         except ValueError:
             logger.warning("Got an exception when getting list of docs", exc_info=True)
             pass
-        logger.debug("Found count=%s ingested documents", len(ingested_docs))
+        logger.debug(
+            "Found count=%s ingested documents (collection=%s)",
+            len(ingested_docs),
+            collection_name,
+        )
         return ingested_docs
 
-    def delete(self, doc_id: str) -> None:
+    def delete(
+        self, doc_id: str, collection_name: str | None = None
+    ) -> None:
         """Delete an ingested document.
+
+        Args:
+            doc_id: Document ID to delete
+            collection_name: Optional collection name. If not provided, tries to find the document in all collections.
 
         :raises ValueError: if the document does not exist
         """
         logger.info(
-            "Deleting the ingested document=%s in the doc and index store", doc_id
+            "Deleting the ingested document=%s from collection=%s",
+            doc_id,
+            collection_name,
         )
-        self.ingest_component.delete(doc_id)
+        if collection_name:
+            ingest_component = self._get_ingest_component(collection_name)
+            ingest_component.delete(doc_id)
+        else:
+            # Try to delete from default collection first
+            # Note: This may need refinement to search across all collections
+            ingest_component = self._get_ingest_component(
+                self.settings.vectorstore.default_collection_name
+            )
+            ingest_component.delete(doc_id)

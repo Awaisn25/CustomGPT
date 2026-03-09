@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 from llama_index.core.llms import ChatMessage, MessageRole
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from private_gpt.open_ai.extensions.context_filter import ContextFilter
@@ -22,6 +22,10 @@ class ChatBody(BaseModel):
     context_filter: ContextFilter | None = None
     include_sources: bool = True
     stream: bool = False
+    collection_name: str | None = Field(
+        None,
+        description="Optional collection name. If not provided, uses default collection.",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -96,6 +100,7 @@ def chat_completion(
             messages=all_messages,
             use_context=body.use_context,
             context_filter=body.context_filter,
+            collection_name=body.collection_name,
         )
         return StreamingResponse(
             to_openai_sse_stream(
@@ -109,6 +114,7 @@ def chat_completion(
             messages=all_messages,
             use_context=body.use_context,
             context_filter=body.context_filter,
+            collection_name=body.collection_name,
         )
         return to_openai_response(
             completion.response, completion.sources if body.include_sources else None

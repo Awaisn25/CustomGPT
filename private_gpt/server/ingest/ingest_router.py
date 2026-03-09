@@ -1,6 +1,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from private_gpt.server.ingest.ingest_service import IngestService
@@ -129,3 +130,65 @@ def delete_ingested(
     """
     service = request.state.injector.get(IngestService)
     service.delete(doc_id, collection_name=collection_name)
+
+
+@ingest_router.get("/ingest/{doc_id}/file", tags=["Ingestion"])
+def get_document_file(
+    request: Request, doc_id: str, collection_name: str | None = None
+) -> FileResponse:
+    """Retrieve the original source file for a document.
+
+    The `doc_id` can be obtained from the `GET /ingest/list` endpoint or from
+    the sources returned in chat/completion responses.
+
+    This endpoint serves the original file that was ingested, allowing users to
+    view the source document. For PDFs, you can append `#page=N` to the URL to
+    open at a specific page.
+
+    If `collection_name` is provided, the document will be retrieved from that collection.
+    Otherwise, the default collection will be used.
+
+    Returns:
+        FileResponse: The original document file with appropriate Content-Type header
+
+    Raises:
+        HTTPException: 404 if document not found or file no longer exists
+        HTTPException: 403 if file path is outside allowed directories
+    """
+    service = request.state.injector.get(IngestService)
+
+    try:
+        file_path = service.get_document_file_path(doc_id, collection_name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    # Determine Content-Type based on file extension
+    content_types = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".ppt": "application/vnd.ms-powerpoint",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+        ".csv": "text/csv",
+        ".json": "application/json",
+        ".xml": "application/xml",
+        ".html": "text/html",
+        ".htm": "text/html",
+    }
+
+    file_extension = file_path.suffix.lower()
+    media_type = content_types.get(file_extension, "application/octet-stream")
+
+    # Return file with inline disposition (view in browser) rather than download
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=file_path.name,
+        headers={"Content-Disposition": f'inline; filename="{file_path.name}"'},
+    )

@@ -21,6 +21,22 @@ data:
     enabled: ${LOCAL_INGESTION_ENABLED:true}
     allow_ingest_from: ["*"]
   local_data_folder: local_data/private_gpt
+  paths:
+    # Persistent storage path (e.g., D:/ on Windows) - documents here remain on disk
+    persistent_path: "/home/awaisn/Projects/PrivateGPT/private-gpt/persistent_docs"
+    # Temporary storage path (e.g., E:/ on Windows) - documents here can be analyzed and removed
+    temporary_path: "/home/awaisn/Projects/PrivateGPT/private-gpt/temp_docs"
+    persistent_collection_name: "persistent_docs"
+    temporary_collection_name: "temporary_docs"
+    # Enable automatic file watching for the temporary path
+    # When enabled, new files are automatically ingested and deleted files are removed from the index
+    watch_enabled: true
+    # If true, file modifications will trigger re-ingestion
+    watch_modifications: false
+    # If true, create the persistent and temporary paths if they don't exist
+    create_paths_if_missing: true
+    # If true, sync existing files in watched paths on startup
+    sync_on_startup: true
 
 ui:
   enabled: true
@@ -61,7 +77,7 @@ llm:
   temperature: 0.1      # The temperature of the model. Increasing the temperature will make the model answer more creatively. A value of 0.1 would be more factual. (Default: 0.1)
 
 rag:
-  similarity_top_k: 10
+  similarity_top_k: 5
   #This value controls how many "top" documents the RAG returns to use in the context.
   #similarity_value: 0.45
   #This value is disabled by default.  If you enable this settings, the RAG will only use articles that meet a certain percentage score.
@@ -104,6 +120,8 @@ huggingface:
 
 vectorstore:
   database: qdrant
+  # Default collection name for backward compatibility (used when no collection is specified)
+  default_collection_name: "make_this_parameterizable_per_api_call"
 
 nodestore:
   database: simple

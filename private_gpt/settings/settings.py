@@ -117,6 +117,26 @@ class DataPathsSettings(BaseModel):
         "temporary_docs",
         description="Collection name for documents in the temporary path.",
     )
+    watch_enabled: bool = Field(
+        True,
+        description="Enable automatic file watching for the temporary path. "
+        "When enabled, new files are automatically ingested and deleted files "
+        "are automatically removed from the index.",
+    )
+    watch_modifications: bool = Field(
+        False,
+        description="If True, file modifications will trigger re-ingestion. "
+        "Only applies when watch_enabled is True.",
+    )
+    create_paths_if_missing: bool = Field(
+        True,
+        description="If True, create the persistent and temporary paths if they don't exist.",
+    )
+    sync_on_startup: bool = Field(
+        True,
+        description="If True, sync existing files in watched paths on startup. "
+        "This ingests any files that are not already tracked.",
+    )
 
 
 class DataSettings(BaseModel):

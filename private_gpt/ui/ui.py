@@ -16,17 +16,19 @@ from llama_index.core.llms import ChatMessage, ChatResponse, MessageRole
 from llama_index.core.types import TokenGen
 from pydantic import BaseModel
 
+from private_gpt.components.ingest.file_tracker import get_file_tracker
+from private_gpt.components.llm.llm_component import LLMComponent
 from private_gpt.constants import PROJECT_ROOT_PATH
 from private_gpt.di import global_injector
 from private_gpt.open_ai.extensions.context_filter import ContextFilter
 from private_gpt.server.chat.chat_service import ChatService, CompletionGen
 from private_gpt.server.chunks.chunks_service import Chunk, ChunksService
 from private_gpt.server.ingest.ingest_service import IngestService
+from private_gpt.server.ingest.watched_path_manager import WatchedPathManager
 from private_gpt.server.recipes.summarize.summarize_service import SummarizeService
-from private_gpt.settings.settings import settings
+from private_gpt.settings.settings import Settings, settings
 from private_gpt.ui.images import logo_svg
 from private_gpt.utils.model_config import ModelConfig, get_available_models
-from private_gpt.components.llm.llm_component import LLMComponent
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ class Source(BaseModel):
     file: str
     page: str
     text: str
+    doc_id: str
 
     class Config:
         frozen = True
@@ -71,8 +74,11 @@ class Source(BaseModel):
 
             file_name = doc_metadata.get("file_name", "-") if doc_metadata else "-"
             page_label = doc_metadata.get("page_label", "-") if doc_metadata else "-"
+            doc_id = chunk.document.doc_id
 
-            source = Source(file=file_name, page=page_label, text=chunk.text)
+            source = Source(
+                file=file_name, page=page_label, text=chunk.text, doc_id=doc_id
+            )
             curated_sources.append(source)
             curated_sources = list(
                 dict.fromkeys(curated_sources).keys()
@@ -91,28 +97,57 @@ class PrivateGptUi:
         chunks_service: ChunksService,
         summarizeService: SummarizeService,
         llm_component: LLMComponent,
+        settings: Settings,
     ) -> None:
         self._ingest_service = ingest_service
         self._chat_service = chat_service
         self._chunks_service = chunks_service
         self._summarize_service = summarizeService
         self._llm_component = llm_component
+        self._settings = settings
 
         # Cache the UI blocks
         self._ui_block = None
 
         self._selected_filename = None
+        self._selected_collection: str | None = None  # Track selected collection
 
         # Initialize system prompt based on default mode
         default_mode_map = {mode.value: mode for mode in Modes}
         self._default_mode = default_mode_map.get(
-            settings().ui.default_mode, Modes.RAG_MODE
+            settings.ui.default_mode, Modes.RAG_MODE
         )
         self._system_prompt = self._get_default_system_prompt(self._default_mode)
 
         # Get available models and current model
         self._available_models = get_available_models()
         self._current_model = self._get_current_model_display_name()
+
+        # Collection names from settings
+        self._default_collection = settings.vectorstore.default_collection_name
+        self._persistent_collection = settings.data.paths.persistent_collection_name
+        self._temporary_collection = settings.data.paths.temporary_collection_name
+
+    def _get_collection_choices(self) -> list[str]:
+        """Get list of available collections for dropdown."""
+        return [
+            f"All Collections",
+            f"Default ({self._default_collection})",
+            f"Persistent ({self._persistent_collection})",
+            f"Temporary ({self._temporary_collection})",
+        ]
+
+    def _get_collection_name_from_choice(self, choice: str) -> str | None:
+        """Extract collection name from dropdown choice."""
+        if choice.startswith("All"):
+            return None
+        elif choice.startswith("Default"):
+            return self._default_collection
+        elif choice.startswith("Persistent"):
+            return self._persistent_collection
+        elif choice.startswith("Temporary"):
+            return self._temporary_collection
+        return None
 
     def _chat(
         self, message: str, history: list[list[str]], mode: Modes, *_: Any
@@ -135,9 +170,16 @@ class PrivateGptUi:
                 used_files = set()
                 for index, source in enumerate(cur_sources, start=1):
                     if f"{source.file}-{source.page}" not in used_files:
+                        # Create clickable link to the document
+                        file_url = f"/v1/ingest/{source.doc_id}/file?collection_name={self._selected_collection}"
+                        # Add page anchor for PDFs
+                        if source.page and source.page != "-":
+                            file_url += f"#page={source.page}"
+
+                        # Format as markdown link
                         sources_text = (
                             sources_text
-                            + f"{index}. {source.file} (page {source.page}) \n\n"
+                            + f"{index}. [{source.file}]({file_url}) (page {source.page}) \n\n"
                         )
                         used_files.add(f"{source.file}-{source.page}")
                 sources_text += "<hr>\n\n"
@@ -186,9 +228,12 @@ class PrivateGptUi:
                 context_filter = None
                 if self._selected_filename is not None:
                     docs_ids = []
-                    for ingested_document in self._ingest_service.list_ingested():
+                    for ingested_document in self._ingest_service.list_ingested(
+                        collection_name=self._selected_collection
+                    ):
                         if (
-                            ingested_document.doc_metadata["file_name"]
+                            ingested_document.doc_metadata
+                            and ingested_document.doc_metadata.get("file_name")
                             == self._selected_filename
                         ):
                             docs_ids.append(ingested_document.doc_id)
@@ -198,6 +243,7 @@ class PrivateGptUi:
                     messages=all_messages,
                     use_context=True,
                     context_filter=context_filter,
+                    collection_name=self._selected_collection,
                 )
                 yield from yield_deltas(query_stream)
             case Modes.BASIC_CHAT_MODE:
@@ -214,20 +260,33 @@ class PrivateGptUi:
 
                 sources = Source.curate_sources(response)
 
-                yield "\n\n\n".join(
-                    f"{index}. **{source.file} "
-                    f"(page {source.page})**\n "
-                    f"{source.text}"
-                    for index, source in enumerate(sources, start=1)
-                )
+                # Build search results with clickable links
+                search_results = []
+                for index, source in enumerate(sources, start=1):
+                    # Create clickable link to the document
+                    file_url = f"/v1/ingest/{source.doc_id}/file?collection_name={self._selected_collection}"
+                    # Add page anchor for PDFs
+                    if source.page and source.page != "-":
+                        file_url += f"#page={source.page}"
+
+                    search_results.append(
+                        f"{index}. **[{source.file}]({file_url}) "
+                        f"(page {source.page})**\n "
+                        f"{source.text}"
+                    )
+
+                yield "\n\n\n".join(search_results)
             case Modes.SUMMARIZE_MODE:
                 # Summarize the given message, optionally using selected files
                 context_filter = None
                 if self._selected_filename:
                     docs_ids = []
-                    for ingested_document in self._ingest_service.list_ingested():
+                    for ingested_document in self._ingest_service.list_ingested(
+                        collection_name=self._selected_collection
+                    ):
                         if (
-                            ingested_document.doc_metadata["file_name"]
+                            ingested_document.doc_metadata
+                            and ingested_document.doc_metadata.get("file_name")
                             == self._selected_filename
                         ):
                             docs_ids.append(ingested_document.doc_id)
@@ -292,28 +351,50 @@ class PrivateGptUi:
         ]
 
     def _list_ingested_files(self) -> list[list[str]]:
-        files = set()
-        for ingested_document in self._ingest_service.list_ingested():
+        """List ingested files, optionally filtered by selected collection."""
+        files: dict[str, str] = {}  # file_name -> collection_name
+        for ingested_document in self._ingest_service.list_ingested(
+            collection_name=self._selected_collection
+        ):
             if ingested_document.doc_metadata is None:
                 # Skipping documents without metadata
                 continue
             file_name = ingested_document.doc_metadata.get(
                 "file_name", "[FILE NAME MISSING]"
             )
-            files.add(file_name)
-        return [[row] for row in files]
+            collection = ingested_document.doc_metadata.get(
+                "collection_name", "default"
+            )
+            # Track file with collection info
+            if file_name not in files:
+                files[file_name] = collection
+        # Return as list with file name and collection
+        return [[name, coll] for name, coll in files.items()]
 
-    def _upload_file(self, files: list[str]) -> None:
-        logger.debug("Loading count=%s files", len(files))
+    def _on_collection_change(self, collection_choice: str) -> Any:
+        """Handle collection dropdown change."""
+        self._selected_collection = self._get_collection_name_from_choice(collection_choice)
+        logger.info(f"Selected collection: {self._selected_collection}")
+        # Refresh the file list
+        return gr.List(self._list_ingested_files())
+
+    def _upload_file(self, files: list[str]) -> Any:
+        """Upload files to the selected collection."""
+        logger.debug("Loading count=%s files into collection=%s", len(files), self._selected_collection)
         paths = [Path(file) for file in files]
+
+        # Determine collection to use (default if not selected)
+        collection = self._selected_collection or self._default_collection
 
         # remove all existing Documents with name identical to a new file upload:
         file_names = [path.name for path in paths]
         doc_ids_to_delete = []
-        for ingested_document in self._ingest_service.list_ingested():
+        for ingested_document in self._ingest_service.list_ingested(
+            collection_name=collection
+        ):
             if (
                 ingested_document.doc_metadata
-                and ingested_document.doc_metadata["file_name"] in file_names
+                and ingested_document.doc_metadata.get("file_name") in file_names
             ):
                 doc_ids_to_delete.append(ingested_document.doc_id)
         if len(doc_ids_to_delete) > 0:
@@ -322,15 +403,26 @@ class PrivateGptUi:
                 len(doc_ids_to_delete),
             )
             for doc_id in doc_ids_to_delete:
-                self._ingest_service.delete(doc_id)
+                self._ingest_service.delete(doc_id, collection_name=collection)
 
-        self._ingest_service.bulk_ingest([(str(path.name), path) for path in paths])
+        self._ingest_service.bulk_ingest(
+            [(str(path.name), path) for path in paths],
+            collection_name=collection,
+        )
+        # Return updated file list
+        return gr.List(self._list_ingested_files())
 
     def _delete_all_files(self) -> Any:
-        ingested_files = self._ingest_service.list_ingested()
-        logger.debug("Deleting count=%s files", len(ingested_files))
+        """Delete all files from the selected collection (or all collections)."""
+        ingested_files = self._ingest_service.list_ingested(
+            collection_name=self._selected_collection
+        )
+        logger.debug("Deleting count=%s files from collection=%s", len(ingested_files), self._selected_collection)
         for ingested_document in ingested_files:
-            self._ingest_service.delete(ingested_document.doc_id)
+            self._ingest_service.delete(
+                ingested_document.doc_id,
+                collection_name=self._selected_collection,
+            )
         return [
             gr.List(self._list_ingested_files()),
             gr.components.Button(interactive=False),
@@ -339,15 +431,21 @@ class PrivateGptUi:
         ]
 
     def _delete_selected_file(self) -> Any:
-        logger.debug("Deleting selected %s", self._selected_filename)
+        """Delete selected file from the selected collection."""
+        logger.debug("Deleting selected %s from collection=%s", self._selected_filename, self._selected_collection)
         # Note: keep looping for pdf's (each page became a Document)
-        for ingested_document in self._ingest_service.list_ingested():
+        for ingested_document in self._ingest_service.list_ingested(
+            collection_name=self._selected_collection
+        ):
             if (
                 ingested_document.doc_metadata
-                and ingested_document.doc_metadata["file_name"]
+                and ingested_document.doc_metadata.get("file_name")
                 == self._selected_filename
             ):
-                self._ingest_service.delete(ingested_document.doc_id)
+                self._ingest_service.delete(
+                    ingested_document.doc_id,
+                    collection_name=self._selected_collection,
+                )
         return [
             gr.List(self._list_ingested_files()),
             gr.components.Button(interactive=False),
@@ -415,6 +513,41 @@ class PrivateGptUi:
                 gr.update(),
             )
 
+    def _get_watcher_status(self) -> str:
+        """Get the current status of file watchers."""
+        try:
+            watched_path_manager = global_injector.get(WatchedPathManager)
+            active_watchers = watched_path_manager.get_active_watchers()
+            
+            if not active_watchers:
+                return "🔴 No active watchers"
+            
+            status_lines = ["🟢 Active watchers:"]
+            for path, collection in active_watchers.items():
+                status_lines.append(f"  • {path} → {collection}")
+            return "\n".join(status_lines)
+        except Exception as e:
+            logger.debug(f"Error getting watcher status: {e}")
+            return "⚪ Watcher status unavailable"
+
+    def _get_tracked_files_count(self) -> str:
+        """Get count of tracked files per collection."""
+        try:
+            file_tracker = get_file_tracker()
+            counts = []
+            for coll_name in [self._default_collection, self._persistent_collection, self._temporary_collection]:
+                tracked = file_tracker.get_all_tracked_files(coll_name)
+                if tracked:
+                    counts.append(f"{coll_name}: {len(tracked)} files")
+            return ", ".join(counts) if counts else "No tracked files"
+        except Exception as e:
+            logger.debug(f"Error getting tracked files count: {e}")
+            return "Tracking info unavailable"
+
+    def _refresh_watcher_status(self) -> str:
+        """Refresh and return the watcher status."""
+        return self._get_watcher_status()
+
     def _build_ui_blocks(self) -> gr.Blocks:
         logger.debug("Creating the UI blocks")
         with gr.Blocks(
@@ -439,7 +572,9 @@ class PrivateGptUi:
             ".footer { text-align: center; margin-top: 20px; font-size: 14px; display: flex; align-items: center; justify-content: center; }"
             ".footer-zylon-link { display:flex; margin-left: 5px; text-decoration: auto; color: var(--body-text-color); }"
             ".footer-zylon-link:hover { color: #C7BAFF; }"
-            ".footer-zylon-ico { height: 20px; margin-left: 5px; background-color: antiquewhite; border-radius: 2px; }",
+            ".footer-zylon-ico { height: 20px; margin-left: 5px; background-color: antiquewhite; border-radius: 2px; }"
+            ".watcher-status { font-size: 12px; padding: 8px; border-radius: 4px; background: var(--background-fill-secondary); }"
+            ".collection-info { font-size: 11px; color: var(--body-text-color-subdued); }",
         ) as blocks:
             # with gr.Row():
                 # gr.HTML(f"<div class='logo'/><img src={logo_svg} alt=PrivateGPT></div")
@@ -472,6 +607,16 @@ class PrivateGptUi:
                         max_lines=3,
                         interactive=False,
                     )
+
+                    # Collection selector dropdown
+                    collection_dropdown = gr.Dropdown(
+                        choices=self._get_collection_choices(),
+                        label="📁 Collection",
+                        value="All Collections",
+                        interactive=True,
+                        info="Select which collection to query/upload to",
+                    )
+
                     upload_button = gr.components.UploadButton(
                         "Upload File(s)",
                         type="filepath",
@@ -480,11 +625,18 @@ class PrivateGptUi:
                     )
                     ingested_dataset = gr.List(
                         self._list_ingested_files,
-                        headers=["File name"],
+                        headers=["File name", "Collection"],
                         label="Ingested Files",
+                        col_count=2,
                         # height=235,
                         interactive=False,
                         render=False,  # Rendered under the button
+                    )
+                    # Collection change handler
+                    collection_dropdown.change(
+                        self._on_collection_change,
+                        inputs=collection_dropdown,
+                        outputs=ingested_dataset,
                     )
                     upload_button.upload(
                         self._upload_file,
@@ -505,13 +657,13 @@ class PrivateGptUi:
                     delete_file_button = gr.components.Button(
                         "🗑️ Delete selected file",
                         size="sm",
-                        visible=settings().ui.delete_file_button_enabled,
+                        visible=self._settings.ui.delete_file_button_enabled,
                         interactive=False,
                     )
                     delete_files_button = gr.components.Button(
                         "⚠️ Delete ALL files",
                         size="sm",
-                        visible=settings().ui.delete_all_files_button_enabled,
+                        visible=self._settings.ui.delete_all_files_button_enabled,
                     )
                     deselect_file_button.click(
                         self._deselect_selected_file,
@@ -547,6 +699,37 @@ class PrivateGptUi:
                             selected_text,
                         ],
                     )
+
+                    # File Watcher Status Panel
+                    with gr.Accordion("📂 File Watcher Status", open=False):
+                        watcher_status = gr.Textbox(
+                            value=self._get_watcher_status,
+                            label="Watcher Status",
+                            interactive=False,
+                            lines=3,
+                            elem_classes=["watcher-status"],
+                        )
+                        refresh_watcher_btn = gr.Button(
+                            "🔄 Refresh Status", size="sm"
+                        )
+                        refresh_watcher_btn.click(
+                            self._refresh_watcher_status,
+                            outputs=watcher_status,
+                        )
+                        # Path info
+                        gr.Markdown(
+                            f"""
+                            **Configured Paths:**
+                            - Persistent: `{self._settings.data.paths.persistent_path}`
+                            - Temporary: `{self._settings.data.paths.temporary_path}`
+                            
+                            **Watch Settings:**
+                            - Watch Enabled: `{self._settings.data.paths.watch_enabled}`
+                            - Watch Modifications: `{self._settings.data.paths.watch_modifications}`
+                            """,
+                            elem_classes=["collection-info"],
+                        )
+
                     system_prompt_input = gr.Textbox(
                         placeholder=self._system_prompt,
                         label="System Prompt",

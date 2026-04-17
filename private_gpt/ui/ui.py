@@ -254,8 +254,26 @@ class PrivateGptUi:
                 yield from yield_deltas(llm_stream)
 
             case Modes.SEARCH_MODE:
+                context_filter = None
+                if self._selected_filename is not None:
+                    docs_ids = []
+                    for ingested_document in self._ingest_service.list_ingested(
+                        collection_name=self._selected_collection
+                    ):
+                        if (
+                            ingested_document.doc_metadata
+                            and ingested_document.doc_metadata.get("file_name")
+                            == self._selected_filename
+                        ):
+                            docs_ids.append(ingested_document.doc_id)
+                    context_filter = ContextFilter(docs_ids=docs_ids)
+
                 response = self._chunks_service.retrieve_relevant(
-                    text=message, limit=4, prev_next_chunks=0
+                    text=message,
+                    limit=4,
+                    prev_next_chunks=0,
+                    context_filter=context_filter,
+                    collection_name=self._selected_collection,
                 )
 
                 sources = Source.curate_sources(response)

@@ -165,7 +165,7 @@ class LLMComponent:
                 )
 
                 if ollama_settings.autopull_models:
-                    from private_gpt.utils.ollama import check_connection, pull_model
+                    from private_gpt.utils.ollama_utils import check_connection, pull_model
 
                     if not check_connection(llm.client):
                         raise ValueError(
@@ -262,7 +262,7 @@ class LLMComponent:
         )
 
         if ollama_settings.autopull_models:
-            from private_gpt.utils.ollama import check_connection, pull_model
+            from private_gpt.utils.ollama_utils import check_connection, pull_model
 
             if not check_connection(llm.client):
                 raise ValueError(

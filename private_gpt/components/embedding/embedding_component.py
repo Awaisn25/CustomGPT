@@ -94,7 +94,7 @@ class EmbeddingComponent:
 
                 if ollama_settings.autopull_models:
                     if ollama_settings.autopull_models:
-                        from private_gpt.utils.ollama import (
+                        from private_gpt.utils.ollama_utils import (
                             check_connection,
                             pull_model,
                         )

@@ -31,4 +31,6 @@ __pycache__/
 .DS_Store
 
 practice/
-qdrant_storage/**
+qdrant_storage/
+temp_docs/
+persistent_docs/

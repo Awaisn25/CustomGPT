@@ -270,6 +270,40 @@ class WatchedPathManager:
                 f"Temporary path does not exist and create_paths_if_missing is False: {temp_path}"
             )
 
+        # Start watcher for persistent path
+        persistent_path = Path(paths_settings.persistent_path)
+        persistent_collection = paths_settings.persistent_collection_name
+
+        if persistent_path.exists() or paths_settings.create_paths_if_missing:
+            if not persistent_path.exists():
+                try:
+                    persistent_path.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"Created persistent path: {persistent_path}")
+                except OSError as e:
+                    logger.error(
+                        f"Failed to create persistent path {persistent_path}: {e}"
+                    )
+                    self._started = True
+                    return
+
+            success = self.start_watcher(
+                watch_path=persistent_path,
+                collection_name=persistent_collection,
+                watch_modifications=paths_settings.watch_modifications,
+            )
+            if success:
+                logger.info(
+                    f"Started automatic file watching for persistent path: {persistent_path}"
+                )
+            else:
+                logger.error(
+                    f"Failed to start file watching for persistent path: {persistent_path}"
+                )
+        else:
+            logger.warning(
+                f"Persistent path does not exist and create_paths_if_missing is False: {persistent_path}"
+            )
+
         self._started = True
 
     def stop_all_watchers(self) -> None:

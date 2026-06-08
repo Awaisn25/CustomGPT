@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from injector import inject, singleton
 
 from private_gpt.components.ingest.file_tracker import FileTracker, get_file_tracker
+from private_gpt.components.ingest.pdf_converter import needs_conversion
 from private_gpt.server.ingest.ingest_watcher import TemporaryPathWatcher
 from private_gpt.settings.settings import Settings
 
@@ -88,6 +89,13 @@ class WatchedPathManager:
             # Track the file-to-document mapping
             doc_ids = [doc.doc_id for doc in ingested_docs]
             self._file_tracker.track_file(file_path, doc_ids, collection_name)
+
+            # If a PDF was produced alongside the original, track it too so the
+            # watcher skips it when it fires the on_created event for the new .pdf
+            if needs_conversion(file_path):
+                pdf_sibling = file_path.with_suffix(".pdf")
+                if pdf_sibling.exists():
+                    self._file_tracker.track_file(pdf_sibling, doc_ids, collection_name)
 
             logger.info(
                 f"Successfully ingested {len(doc_ids)} document(s) from {file_path} "

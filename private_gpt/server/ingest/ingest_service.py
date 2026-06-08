@@ -9,6 +9,7 @@ from llama_index.core.storage import StorageContext
 
 from private_gpt.components.embedding.embedding_component import EmbeddingComponent
 from private_gpt.components.ingest.ingest_component import get_ingestion_component
+from private_gpt.components.ingest.pdf_converter import convert_to_pdf, needs_conversion
 from private_gpt.components.llm.llm_component import LLMComponent
 from private_gpt.components.node_store.node_store_component import NodeStoreComponent
 from private_gpt.components.vector_store.vector_store_component import (
@@ -129,14 +130,23 @@ class IngestService:
         if collection_name is None:
             collection_name = get_collection_for_path(file_data, self.settings)
 
+        # Convert to PDF when the original format can't be rendered in browsers
+        effective_path = file_data
+        effective_name = file_name
+        if needs_conversion(file_data):
+            pdf_path = convert_to_pdf(file_data)
+            if pdf_path is not None:
+                effective_path = pdf_path
+                effective_name = pdf_path.name
+
         logger.info(
-            "Ingesting file_name=%s into collection=%s", file_name, collection_name
+            "Ingesting file_name=%s into collection=%s", effective_name, collection_name
         )
         ingest_component = self._get_ingest_component(collection_name)
-        documents = ingest_component.ingest(file_name, file_data)
+        documents = ingest_component.ingest(effective_name, effective_path)
         logger.info(
             "Finished ingestion file_name=%s into collection=%s",
-            file_name,
+            effective_name,
             collection_name,
         )
         return [IngestedDoc.from_document(document) for document in documents]

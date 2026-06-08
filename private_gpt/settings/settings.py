@@ -410,7 +410,7 @@ class AzureOpenAISettings(BaseModel):
 class UISettings(BaseModel):
     enabled: bool
     path: str
-    default_mode: Literal["RAG", "Search", "Basic", "Summarize"] = Field(
+    default_mode: Literal["RAG", "Search", "Basic", "Summarize", "Batch Summarize"] = Field(
         "RAG",
         description="The default mode.",
     )
@@ -468,6 +468,10 @@ class SummarizeSettings(BaseModel):
     use_async: bool = Field(
         True,
         description="If set to True, the summarization will be done asynchronously.",
+    )
+    max_workers: int = Field(
+        3,
+        description="Number of parallel workers for batch summarization (Batch Summarize mode).",
     )
 
 

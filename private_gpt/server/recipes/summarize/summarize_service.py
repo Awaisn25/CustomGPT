@@ -1,3 +1,6 @@
+from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from itertools import chain
 
 from injector import inject, singleton
@@ -20,6 +23,13 @@ from private_gpt.components.vector_store.vector_store_component import (
 )
 from private_gpt.open_ai.extensions.context_filter import ContextFilter
 from private_gpt.settings.settings import Settings
+
+
+@dataclass
+class SummaryResult:
+    filename: str
+    doc_id: str
+    summary: str
 
 DEFAULT_SUMMARIZE_PROMPT = (
     "Provide a comprehensive summary of the provided context information. "
@@ -170,3 +180,36 @@ class SummarizeService:
             context_filter=context_filter,
             prompt=prompt,
         )  # type: ignore
+
+    def summarize_batch(
+        self,
+        doc_items: list[tuple[str, list[str]]],
+        instructions: str | None = None,
+        max_workers: int | None = None,
+    ) -> Generator[SummaryResult, None, None]:
+        """Summarize multiple documents in parallel, yielding results as each worker finishes.
+
+        Args:
+            doc_items: List of (filename, doc_ids) pairs. All doc_ids for a filename
+                       are used together so multi-page documents are summarized as a whole.
+            instructions: Optional custom instruction appended to the default summarize prompt.
+            max_workers: Number of parallel workers. Defaults to settings.summarize.max_workers.
+        """
+        workers = max_workers if max_workers is not None else self.settings.summarize.max_workers
+
+        def _summarize_one(filename: str, doc_ids: list[str]) -> SummaryResult:
+            context_filter = ContextFilter(docs_ids=doc_ids)
+            summary = self.summarize(
+                use_context=True,
+                instructions=instructions,
+                context_filter=context_filter,
+            )
+            return SummaryResult(filename=filename, doc_id=doc_ids[0], summary=summary)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_summarize_one, filename, doc_ids): filename
+                for filename, doc_ids in doc_items
+            }
+            for future in as_completed(futures):
+                yield future.result()

@@ -25,7 +25,10 @@ from private_gpt.server.chat.chat_service import ChatService, CompletionGen
 from private_gpt.server.chunks.chunks_service import Chunk, ChunksService
 from private_gpt.server.ingest.ingest_service import IngestService
 from private_gpt.server.ingest.watched_path_manager import WatchedPathManager
-from private_gpt.server.recipes.summarize.summarize_service import SummarizeService
+from private_gpt.server.recipes.summarize.summarize_service import (
+    SummaryResult,
+    SummarizeService,
+)
 from private_gpt.settings.settings import Settings, settings
 from private_gpt.ui.images import logo_svg
 from private_gpt.utils.model_config import ModelConfig, get_available_models
@@ -46,6 +49,7 @@ class Modes(str, Enum):
     SEARCH_MODE = "Search"
     BASIC_CHAT_MODE = "Basic"
     SUMMARIZE_MODE = "Summarize"
+    SUMMARIZE_ALL_MODE = "Batch Summarize"
 
 
 MODES: list[Modes] = [
@@ -53,6 +57,7 @@ MODES: list[Modes] = [
     Modes.SEARCH_MODE,
     Modes.BASIC_CHAT_MODE,
     Modes.SUMMARIZE_MODE,
+    Modes.SUMMARIZE_ALL_MODE,
 ]
 
 
@@ -149,8 +154,17 @@ class PrivateGptUi:
             return self._temporary_collection
         return None
 
+    def _get_batch_doc_choices(self) -> list[str]:
+        return [row[0] for row in self._list_ingested_files()]
+
     def _chat(
-        self, message: str, history: list[list[str]], mode: Modes, *_: Any
+        self,
+        message: str,
+        history: list[list[str]],
+        mode: Modes,
+        _upload: Any,
+        _system_prompt: Any,
+        selected_docs: list[str] | None = None,
     ) -> Any:
         def yield_deltas(completion_gen: CompletionGen) -> Iterable[str]:
             full_response: str = ""
@@ -317,6 +331,54 @@ class PrivateGptUi:
                 )
                 yield from yield_tokens(summary_stream)
 
+            case Modes.SUMMARIZE_ALL_MODE:
+                if not selected_docs:
+                    yield "Please select at least one document from the checkbox list on the left."
+                    return
+
+                # Group all doc_ids by filename so multi-page docs are summarized as one unit
+                filename_to_docids: dict[str, list[str]] = {}
+                for ingested_doc in self._ingest_service.list_ingested(
+                    collection_name=self._selected_collection
+                ):
+                    if ingested_doc.doc_metadata is None:
+                        continue
+                    fname = ingested_doc.doc_metadata.get(
+                        "file_name", ingested_doc.doc_id
+                    )
+                    if fname in selected_docs:
+                        filename_to_docids.setdefault(fname, []).append(
+                            ingested_doc.doc_id
+                        )
+
+                doc_items = list(filename_to_docids.items())
+                if not doc_items:
+                    yield "None of the selected documents were found in the current collection."
+                    return
+
+                total = len(doc_items)
+                accumulated = ""
+                result: SummaryResult
+                for i, result in enumerate(
+                    self._summarize_service.summarize_batch(
+                        doc_items, instructions=message or None
+                    )
+                ):
+                    source_link = f"/v1/ingest/{result.doc_id}/file"
+                    if self._selected_collection:
+                        source_link += f"?collection_name={self._selected_collection}"
+                    accumulated += (
+                        f"## {result.filename}\n\n"
+                        f"{result.summary}\n\n"
+                        f"*Sources: [{result.filename}]({source_link})*\n\n---\n\n"
+                    )
+                    yield (
+                        f"*Summarizing {total} document(s) — {i + 1}/{total} done...*"
+                        f"\n\n---\n\n{accumulated}"
+                    )
+                # Final output without progress header
+                yield accumulated
+
     # On initialization and on mode change, this function set the system prompt
     # to the default prompt based on the mode (and user settings).
     @staticmethod
@@ -331,6 +393,8 @@ class PrivateGptUi:
                 p = settings().ui.default_chat_system_prompt
             # For summarization mode, obtain default system prompt from settings
             case Modes.SUMMARIZE_MODE:
+                p = settings().ui.default_summarization_system_prompt
+            case Modes.SUMMARIZE_ALL_MODE:
                 p = settings().ui.default_summarization_system_prompt
             # For any other mode, clear the system prompt
             case _:
@@ -348,6 +412,11 @@ class PrivateGptUi:
                 return "Chat with the LLM using its training data. Files are ignored."
             case Modes.SUMMARIZE_MODE:
                 return "Generate a summary of the selected files. Prompt to customize the result."
+            case Modes.SUMMARIZE_ALL_MODE:
+                return (
+                    "Select documents below, then submit to summarize each in parallel. "
+                    "Optionally type instructions (e.g. 'focus on key dates') to apply to every document."
+                )
             case _:
                 return ""
 
@@ -363,9 +432,18 @@ class PrivateGptUi:
         self._set_system_prompt(self._get_default_system_prompt(mode))
         self._set_explanatation_mode(self._get_default_mode_explanation(mode))
         interactive = self._system_prompt is not None
+        if mode == Modes.SUMMARIZE_ALL_MODE:
+            batch_update = gr.update(
+                visible=True,
+                choices=self._get_batch_doc_choices(),
+                value=[],
+            )
+        else:
+            batch_update = gr.update(visible=False, value=[])
         return [
             gr.update(placeholder=self._system_prompt, interactive=interactive),
             gr.update(value=self._explanation_mode),
+            batch_update,
         ]
 
     def _list_ingested_files(self) -> list[list[str]]:
@@ -393,8 +471,10 @@ class PrivateGptUi:
         """Handle collection dropdown change."""
         self._selected_collection = self._get_collection_name_from_choice(collection_choice)
         logger.info(f"Selected collection: {self._selected_collection}")
-        # Refresh the file list
-        return gr.List(self._list_ingested_files())
+        return (
+            gr.List(self._list_ingested_files()),
+            gr.update(choices=self._get_batch_doc_choices()),
+        )
 
     def _upload_file(self, files: list[str]) -> Any:
         """Upload files to the selected collection."""
@@ -427,8 +507,10 @@ class PrivateGptUi:
             [(str(path.name), path) for path in paths],
             collection_name=collection,
         )
-        # Return updated file list
-        return gr.List(self._list_ingested_files())
+        return (
+            gr.List(self._list_ingested_files()),
+            gr.update(choices=self._get_batch_doc_choices()),
+        )
 
     def _delete_all_files(self) -> Any:
         """Delete all files from the selected collection (or all collections)."""
@@ -446,6 +528,7 @@ class PrivateGptUi:
             gr.components.Button(interactive=False),
             gr.components.Button(interactive=False),
             gr.components.Textbox("All files"),
+            gr.update(choices=self._get_batch_doc_choices(), value=[]),
         ]
 
     def _delete_selected_file(self) -> Any:
@@ -469,6 +552,7 @@ class PrivateGptUi:
             gr.components.Button(interactive=False),
             gr.components.Button(interactive=False),
             gr.components.Textbox("All files"),
+            gr.update(choices=self._get_batch_doc_choices(), value=[]),
         ]
 
     def _deselect_selected_file(self) -> Any:
@@ -641,6 +725,14 @@ class PrivateGptUi:
                         file_count="multiple",
                         size="sm",
                     )
+                    # Batch Summarize document selector (visible only in Batch Summarize mode)
+                    batch_doc_selector = gr.CheckboxGroup(
+                        label="✅ Select documents to summarize",
+                        choices=[],
+                        visible=False,
+                        interactive=True,
+                        render=False,
+                    )
                     ingested_dataset = gr.List(
                         self._list_ingested_files,
                         headers=["File name", "Collection"],
@@ -654,12 +746,12 @@ class PrivateGptUi:
                     collection_dropdown.change(
                         self._on_collection_change,
                         inputs=collection_dropdown,
-                        outputs=ingested_dataset,
+                        outputs=[ingested_dataset, batch_doc_selector],
                     )
                     upload_button.upload(
                         self._upload_file,
                         inputs=upload_button,
-                        outputs=ingested_dataset,
+                        outputs=[ingested_dataset, batch_doc_selector],
                     )
                     ingested_dataset.change(
                         self._list_ingested_files,
@@ -706,6 +798,7 @@ class PrivateGptUi:
                             delete_file_button,
                             deselect_file_button,
                             selected_text,
+                            batch_doc_selector,
                         ],
                     )
                     delete_files_button.click(
@@ -715,6 +808,7 @@ class PrivateGptUi:
                             delete_file_button,
                             deselect_file_button,
                             selected_text,
+                            batch_doc_selector,
                         ],
                     )
 
@@ -755,11 +849,14 @@ class PrivateGptUi:
                         interactive=True,
                         render=False,
                     )
+                    # Render batch doc selector here (below file management)
+                    batch_doc_selector.render()
+
                     # When mode changes, set default system prompt, and other stuffs
                     mode.change(
                         self._set_current_mode,
                         inputs=mode,
-                        outputs=[system_prompt_input, explanation_mode],
+                        outputs=[system_prompt_input, explanation_mode, batch_doc_selector],
                     )
                     # On blur, set system prompt to use in queries
                     system_prompt_input.blur(
@@ -827,7 +924,12 @@ class PrivateGptUi:
                     _ = gr.ChatInterface(
                         self._chat,
                         chatbot=chatbot_component,
-                        additional_inputs=[mode, upload_button, system_prompt_input],
+                        additional_inputs=[
+                            mode,
+                            upload_button,
+                            system_prompt_input,
+                            batch_doc_selector,
+                        ],
                     )
 
                     # Set up model swap handler after both components are defined

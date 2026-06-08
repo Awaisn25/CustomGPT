@@ -3,7 +3,7 @@ name = "private-gpt"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 dependencies = [
     "accelerate>=1.11.0",
     "aiohappyeyeballs>=2.6.1",
@@ -52,7 +52,7 @@ dependencies = [
     "injector>=0.22.0",
     "iprogress>=0.4",
     "ipykernel>=7.1.0",
-    "ipython>=9.7.0",
+    "ipython",
     "ipython-pygments-lexers>=1.1.1",
     "ipywidgets>=8.1.8",
     "itsdangerous>=2.2.0",
@@ -122,6 +122,7 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "pydub>=0.25.1",
     "pygments>=2.19.2",
+    "pymupdf>=1.27.2.3",
     "pypdf>=4.3.1",
     "pytesseract>=0.3.13",
     "python-dateutil>=2.9.0.post0",

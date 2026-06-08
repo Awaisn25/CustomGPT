@@ -7,7 +7,7 @@ from llama_index.core.readers.base import BaseReader
 from llama_index.core.readers.json import JSONReader
 from llama_index.core.schema import Document
 
-from private_gpt.components.readers.custom_readers import CustomImageReader
+from private_gpt.components.readers.custom_readers import CustomImageReader, ScannedPDFReader
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def _try_loading_included_file_formats() -> dict[str, type[BaseReader]]:
 
     default_file_reader_cls: dict[str, type[BaseReader]] = {
         ".hwp": HWPReader,
-        ".pdf": PDFReader,
+        ".pdf": ScannedPDFReader,
         ".docx": DocxReader,
         ".pptx": PptxReader,
         ".ppt": PptxReader,

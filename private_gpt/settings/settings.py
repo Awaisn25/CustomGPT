@@ -473,6 +473,24 @@ class SummarizeSettings(BaseModel):
         3,
         description="Number of parallel workers for batch summarization (Batch Summarize mode).",
     )
+    max_nodes_per_chunk: int = Field(
+        150,
+        description=(
+            "Maximum number of document nodes fed to a single summarization call. "
+            "When a document exceeds this limit, chunked map-reduce summarization is used: "
+            "each chunk is summarized independently, then those chunk summaries are combined "
+            "into a final summary. Reduce this value if you see ReadTimeout errors on large files."
+        ),
+    )
+    request_timeout: float | None = Field(
+        None,
+        description=(
+            "Timeout in seconds for each LLM call during summarization. "
+            "When set, overrides the provider-level request_timeout (e.g. ollama.request_timeout) "
+            "for summarization requests only. Useful for large documents that need more time. "
+            "If None, the provider default is used."
+        ),
+    )
 
 
 class ClickHouseSettings(BaseModel):

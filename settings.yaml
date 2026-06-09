@@ -87,7 +87,9 @@ rag:
     top_n: 1
 
 summarize:
-  use_async: true
+  max_nodes_per_chunk: 100    # lower = safer, but more round-trips
+  request_timeout: 600.0      # 10 min per call, only for summarization
+  use_async: false             # optional: disable async within each chunk to reduce concurrency further
 
 clickhouse:
     host: localhost

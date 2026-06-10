@@ -7,7 +7,6 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from injector import Injector
 from llama_index.core.callbacks import CallbackManager
-from llama_index.core.callbacks.global_handlers import create_global_handler
 from llama_index.core.settings import Settings as LlamaIndexSettings
 
 from private_gpt.server.chat.chat_router import chat_router
@@ -40,10 +39,7 @@ def create_app(root_injector: Injector) -> FastAPI:
     app.include_router(embeddings_router)
     app.include_router(health_router)
 
-    # Add LlamaIndex simple observability
-    global_handler = create_global_handler("simple")
-    if global_handler:
-        LlamaIndexSettings.callback_manager = CallbackManager([global_handler])
+    LlamaIndexSettings.callback_manager = CallbackManager([])
 
     settings = root_injector.get(Settings)
     if settings.server.cors.enabled:

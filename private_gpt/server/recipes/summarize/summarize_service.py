@@ -1,4 +1,5 @@
 import logging
+import threading
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -29,6 +30,10 @@ from private_gpt.open_ai.extensions.context_filter import ContextFilter
 from private_gpt.settings.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+# Serialises all LLM calls during summarization so a local Ollama instance
+# (which handles one request at a time) is never hit concurrently.
+_llm_lock = threading.Lock()
 
 
 @dataclass
@@ -130,6 +135,18 @@ class SummarizeService:
         summarize_query: str,
     ) -> str | TokenGen:
         """Run TREE_SUMMARIZE over a list of nodes and return a string or token generator."""
+        total_chars = sum(len(n.get_content()) for n in nodes)
+        est_tokens = total_chars // 4
+        logger.debug(
+            "_run_tree_summarize: %d nodes, ~%d chars, ~%d estimated tokens "
+            "(context_window=%d, use_async=%s)",
+            len(nodes),
+            total_chars,
+            est_tokens,
+            self.settings.llm.context_window,
+            self.settings.summarize.use_async,
+        )
+
         summary_index = SummaryIndex(
             nodes=nodes,
             storage_context=StorageContext.from_defaults(),
@@ -141,7 +158,30 @@ class SummarizeService:
             streaming=stream,
             use_async=self.settings.summarize.use_async,
         )
-        response = query_engine.query(summarize_query)
+
+        # Serialise all LLM calls: Ollama (local) handles one request at a time.
+        # Without this, parallel batch workers trigger concurrent requests → HTTP 500.
+        with _llm_lock:
+            try:
+                response = query_engine.query(summarize_query)
+            except Exception as exc:
+                # Try to extract the Ollama / HTTP error body for diagnosis
+                ollama_detail: str | None = None
+                try:
+                    from httpx import HTTPStatusError
+                    if isinstance(exc, HTTPStatusError):
+                        ollama_detail = exc.response.text
+                except Exception:
+                    pass
+                logger.error(
+                    "_run_tree_summarize FAILED | nodes=%d, ~tokens=%d | %s%s",
+                    len(nodes),
+                    est_tokens,
+                    exc,
+                    f" | Ollama response body: {ollama_detail}" if ollama_detail else "",
+                )
+                raise
+
         if isinstance(response, Response):
             return response.response or ""
         elif isinstance(response, StreamingResponse):
@@ -207,7 +247,11 @@ class SummarizeService:
             ]
             chunk_summaries: list[str] = []
             for idx, chunk in enumerate(chunks):
-                logger.info("Summarizing chunk %d/%d (%d nodes)…", idx + 1, len(chunks), len(chunk))
+                chunk_chars = sum(len(n.get_content()) for n in chunk)
+                logger.info(
+                    "Summarizing chunk %d/%d (%d nodes, ~%d chars, ~%d est tokens)…",
+                    idx + 1, len(chunks), len(chunk), chunk_chars, chunk_chars // 4,
+                )
                 result = self._run_tree_summarize(chunk, stream=False, summarize_query=summarize_query)
                 chunk_summaries.append(result if isinstance(result, str) else "")
 

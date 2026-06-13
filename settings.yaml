@@ -23,9 +23,9 @@ data:
   local_data_folder: local_data/private_gpt
   paths:
     # Persistent storage path (e.g., D:/ on Windows) - documents here remain on disk
-    persistent_path: "/home/awaisn/Projects/PrivateGPT/private-gpt/persistent_docs"
+    persistent_path: "/home/areejn/LLM/Projects/CustomGPT/persistent_docs"
     # Temporary storage path (e.g., E:/ on Windows) - documents here can be analyzed and removed
-    temporary_path: "/home/awaisn/Projects/PrivateGPT/private-gpt/temp_docs"
+    temporary_path: "/home/areejn/LLM/Projects/CustomGPT/temp_docs"
     persistent_collection_name: "persistent_docs"
     temporary_collection_name: "temporary_docs"
     # Enable automatic file watching for the temporary path
@@ -87,9 +87,10 @@ rag:
     top_n: 1
 
 summarize:
-  max_nodes_per_chunk: 100    # lower = safer, but more round-trips
+  max_nodes_per_chunk: 120    # lower = safer, but more round-trips
   request_timeout: 600.0      # 10 min per call, only for summarization
   use_async: false             # optional: disable async within each chunk to reduce concurrency further
+  max_workers: 3
 
 clickhouse:
     host: localhost

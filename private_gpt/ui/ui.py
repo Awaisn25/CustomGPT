@@ -116,6 +116,7 @@ class PrivateGptUi:
 
         self._selected_filename = None
         self._selected_collection: str | None = None  # Track selected collection
+        self._search_query: str = ""
 
         # Initialize system prompt based on default mode
         default_mode_map = {mode.value: mode for mode in Modes}
@@ -432,7 +433,8 @@ class PrivateGptUi:
         self._set_system_prompt(self._get_default_system_prompt(mode))
         self._set_explanatation_mode(self._get_default_mode_explanation(mode))
         interactive = self._system_prompt is not None
-        if mode == Modes.SUMMARIZE_ALL_MODE:
+        in_batch_mode = mode == Modes.SUMMARIZE_ALL_MODE
+        if in_batch_mode:
             batch_update = gr.update(
                 visible=True,
                 choices=self._get_batch_doc_choices(),
@@ -444,10 +446,13 @@ class PrivateGptUi:
             gr.update(placeholder=self._system_prompt, interactive=interactive),
             gr.update(value=self._explanation_mode),
             batch_update,
+            gr.update(visible=in_batch_mode),  # select_all_button
+            gr.update(visible=in_batch_mode),  # deselect_all_button
         ]
 
-    def _list_ingested_files(self) -> list[list[str]]:
-        """List ingested files, optionally filtered by selected collection."""
+    def _list_ingested_files(self, query: str = "") -> list[list[str]]:
+        """List ingested files, optionally filtered by selected collection and search query."""
+        self._search_query = query
         files: dict[str, str] = {}  # file_name -> collection_name
         for ingested_document in self._ingest_service.list_ingested(
             collection_name=self._selected_collection
@@ -464,15 +469,21 @@ class PrivateGptUi:
             # Track file with collection info
             if file_name not in files:
                 files[file_name] = collection
-        # Return as list with file name and collection
-        return [[name, coll] for name, coll in files.items()]
+        rows = [[name, coll] for name, coll in files.items()]
+        if query:
+            rows = [r for r in rows if query.lower() in r[0].lower()]
+        return rows
+
+    def _refresh_file_list(self) -> list[list[str]]:
+        """Refresh file list preserving the active search filter."""
+        return self._list_ingested_files(self._search_query)
 
     def _on_collection_change(self, collection_choice: str) -> Any:
         """Handle collection dropdown change."""
         self._selected_collection = self._get_collection_name_from_choice(collection_choice)
         logger.info(f"Selected collection: {self._selected_collection}")
         return (
-            gr.List(self._list_ingested_files()),
+            gr.List(self._refresh_file_list()),
             gr.update(choices=self._get_batch_doc_choices()),
         )
 
@@ -508,7 +519,7 @@ class PrivateGptUi:
             collection_name=collection,
         )
         return (
-            gr.List(self._list_ingested_files()),
+            gr.List(self._refresh_file_list()),
             gr.update(choices=self._get_batch_doc_choices()),
         )
 
@@ -524,7 +535,7 @@ class PrivateGptUi:
                 collection_name=self._selected_collection,
             )
         return [
-            gr.List(self._list_ingested_files()),
+            gr.List(self._refresh_file_list()),
             gr.components.Button(interactive=False),
             gr.components.Button(interactive=False),
             gr.components.Textbox("All files"),
@@ -548,7 +559,7 @@ class PrivateGptUi:
                     collection_name=self._selected_collection,
                 )
         return [
-            gr.List(self._list_ingested_files()),
+            gr.List(self._refresh_file_list()),
             gr.components.Button(interactive=False),
             gr.components.Button(interactive=False),
             gr.components.Textbox("All files"),
@@ -754,10 +765,20 @@ class PrivateGptUi:
                         outputs=[ingested_dataset, batch_doc_selector],
                     )
                     ingested_dataset.change(
-                        self._list_ingested_files,
+                        self._refresh_file_list,
                         outputs=ingested_dataset,
                     )
+                    file_search = gr.Textbox(
+                        placeholder="Search files…",
+                        show_label=False,
+                        container=False,
+                    )
                     ingested_dataset.render()
+                    file_search.change(
+                        self._list_ingested_files,
+                        inputs=file_search,
+                        outputs=ingested_dataset,
+                    )
                     deselect_file_button = gr.components.Button(
                         "De-select selected file", size="sm", interactive=False
                     )
@@ -851,12 +872,27 @@ class PrivateGptUi:
                     )
                     # Render batch doc selector here (below file management)
                     batch_doc_selector.render()
+                    with gr.Row():
+                        select_all_button = gr.Button(
+                            "Select All", size="sm", visible=False
+                        )
+                        deselect_all_button = gr.Button(
+                            "Deselect All", size="sm", visible=False
+                        )
+                    select_all_button.click(
+                        lambda: gr.update(value=self._get_batch_doc_choices()),
+                        outputs=batch_doc_selector,
+                    )
+                    deselect_all_button.click(
+                        lambda: gr.update(value=[]),
+                        outputs=batch_doc_selector,
+                    )
 
                     # When mode changes, set default system prompt, and other stuffs
                     mode.change(
                         self._set_current_mode,
                         inputs=mode,
-                        outputs=[system_prompt_input, explanation_mode, batch_doc_selector],
+                        outputs=[system_prompt_input, explanation_mode, batch_doc_selector, select_all_button, deselect_all_button],
                     )
                     # On blur, set system prompt to use in queries
                     system_prompt_input.blur(

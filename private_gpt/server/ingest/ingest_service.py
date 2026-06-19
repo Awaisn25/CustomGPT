@@ -260,27 +260,31 @@ class IngestService:
         """
         ingested_docs: list[IngestedDoc] = []
         try:
-            # If collection_name is specified, only check that collection
-            if collection_name:
-                storage_context = self._get_storage_context(collection_name)
-                docstore = storage_context.docstore
-            else:
-                # Check all collections (use default for now, as docstore is shared)
-                # Note: This may need refinement if docstore is collection-specific
-                storage_context = self._get_storage_context(
-                    self.settings.vectorstore.default_collection_name
-                )
-                docstore = storage_context.docstore
-
-            ref_docs: dict[str, RefDocInfo] | None = docstore.get_all_ref_doc_info()
+            # The docstore is shared across all collections (only the vector store is
+            # per-collection). Fetch everything from the docstore, then filter by the
+            # collection_name stored in each document's metadata.
+            storage_context = self._get_storage_context(
+                collection_name or self.settings.vectorstore.default_collection_name
+            )
+            ref_docs: dict[str, RefDocInfo] | None = (
+                storage_context.docstore.get_all_ref_doc_info()
+            )
 
             if not ref_docs:
                 return ingested_docs
 
             for doc_id, ref_doc_info in ref_docs.items():
-                doc_metadata = None
-                if ref_doc_info is not None and ref_doc_info.metadata is not None:
-                    doc_metadata = IngestedDoc.curate_metadata(ref_doc_info.metadata)
+                if ref_doc_info is None or ref_doc_info.metadata is None:
+                    continue
+
+                # Filter by collection_name stored in metadata (the docstore is shared,
+                # so without this we would return documents from every collection).
+                if collection_name is not None:
+                    doc_collection = ref_doc_info.metadata.get("collection_name")
+                    if doc_collection != collection_name:
+                        continue
+
+                doc_metadata = IngestedDoc.curate_metadata(ref_doc_info.metadata)
                 ingested_docs.append(
                     IngestedDoc(
                         object="ingest.document",

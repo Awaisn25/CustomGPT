@@ -126,8 +126,23 @@ class WatchedPathManager:
             doc_ids = self._file_tracker.untrack_file(file_path, collection_name)
 
             if not doc_ids:
+                # File was not in the tracker (e.g. ingested via UI upload rather than
+                # through the watcher).  Fall back to scanning the docstore by file_name.
                 logger.debug(
-                    f"No tracked documents found for {file_path} in collection {collection_name}"
+                    f"No tracker entry for {file_path} in {collection_name}; "
+                    "falling back to docstore scan by file_name"
+                )
+                file_name = file_path.name
+                for ingested_doc in self._ingest_service.list_ingested(collection_name=collection_name):
+                    if (
+                        ingested_doc.doc_metadata
+                        and ingested_doc.doc_metadata.get("file_name") == file_name
+                    ):
+                        doc_ids.append(ingested_doc.doc_id)
+
+            if not doc_ids:
+                logger.debug(
+                    f"No documents found for {file_path} in collection {collection_name}; nothing to delete"
                 )
                 return
 

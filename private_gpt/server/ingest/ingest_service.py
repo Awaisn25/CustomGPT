@@ -143,7 +143,7 @@ class IngestService:
             "Ingesting file_name=%s into collection=%s", effective_name, collection_name
         )
         ingest_component = self._get_ingest_component(collection_name)
-        documents = ingest_component.ingest(effective_name, effective_path)
+        documents = ingest_component.ingest(effective_name, effective_path, collection_name=collection_name)
         logger.info(
             "Finished ingestion file_name=%s into collection=%s",
             effective_name,

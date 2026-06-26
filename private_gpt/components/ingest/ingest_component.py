@@ -99,10 +99,21 @@ class BaseIngestComponentWithIndex(BaseIngestComponent, abc.ABC):
 
     def delete(self, doc_id: str) -> None:
         with self._index_thread_lock:
-            # Delete the document from the index
-            self._index.delete_ref_doc(doc_id, delete_from_docstore=True)
-
-            # Save the index
+            try:
+                self._index.delete_ref_doc(doc_id, delete_from_docstore=True)
+            except KeyError:
+                # nodes_dict is out of sync with the actual stores (common after restart
+                # with multiple collections sharing one SimpleIndexStore). Fall back to
+                # deleting directly from the vector store and docstore.
+                logger.warning(
+                    "doc_id %s not in index_struct nodes_dict; "
+                    "deleting directly from vector store and docstore",
+                    doc_id,
+                )
+                self._index._vector_store.delete(doc_id)
+                self._index.storage_context.docstore.delete_ref_doc(
+                    doc_id, raise_error_if_not_exist=False
+                )
             self._save_index()
 
 

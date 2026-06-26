@@ -97,7 +97,9 @@ class IngestionHelper:
             if is_temporary is not None:
                 document.metadata["is_temporary"] = is_temporary
             # Remove surrogates and replace with the unicode replacement character to avoid encoding errors
-            document.text = document.text.encode("utf-8", errors="replace").decode("utf-8")
+            clean = document.text.encode("utf-8", errors="replace").decode("utf-8")
+            if clean != document.text:
+                document = document.model_copy(update={"text": clean})
         IngestionHelper._exclude_metadata(documents)
         return documents
 
@@ -120,7 +122,9 @@ class IngestionHelper:
 
         # Sanitize NUL bytes in text which can't be stored in Postgres
         for i in range(len(documents)):
-            documents[i].text = documents[i].text.replace("\u0000", "")
+            clean = documents[i].text.replace("\u0000", "")
+            if clean != documents[i].text:
+                documents[i] = documents[i].model_copy(update={"text": clean})
 
         return documents
 

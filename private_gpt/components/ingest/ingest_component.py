@@ -25,6 +25,71 @@ from private_gpt.utils.eta import eta
 logger = logging.getLogger(__name__)
 
 
+def _debug_log_oversized_nodes(
+    transformations: list[TransformComponent], documents: list[Document]
+) -> None:
+    """TEMP DIAGNOSTIC — measure the embed text length of parsed nodes.
+
+    Helps understand the "input length exceeds the context length" error from
+    the embedding model: it re-runs only the node parser (the first
+    transformation, no embedding) and logs any node whose embed content exceeds
+    the embedder's token limit, plus the largest node seen.
+
+    Fully gated and additive — does nothing unless PGPT_DEBUG_NODE_TOKENS is set,
+    so the normal ingest path is unchanged. Token counts use LlamaIndex's default
+    tokenizer as a proxy (embeddinggemma uses a different tokenizer, but the
+    order of magnitude is what matters here).
+
+    Env vars:
+        PGPT_DEBUG_NODE_TOKENS = 1|true   -> enable
+        PGPT_DEBUG_NODE_LIMIT  = <int>    -> flag threshold in tokens (default 2048)
+
+    Remove once the embedding context-overflow issue is resolved.
+    """
+    if os.environ.get("PGPT_DEBUG_NODE_TOKENS", "").lower() not in ("1", "true"):
+        return
+    try:
+        from llama_index.core.schema import MetadataMode
+        from llama_index.core.utils import get_tokenizer
+
+        threshold = int(os.environ.get("PGPT_DEBUG_NODE_LIMIT", "2048"))
+        tokenizer = get_tokenizer()
+        node_parser = transformations[0]
+        nodes = run_transformations(
+            documents,  # type: ignore[arg-type]
+            [node_parser],
+            show_progress=False,
+        )
+
+        largest_tokens = -1
+        oversized = 0
+        for node in nodes:
+            embed_text = node.get_content(metadata_mode=MetadataMode.EMBED)
+            n_tokens = len(tokenizer(embed_text))
+            largest_tokens = max(largest_tokens, n_tokens)
+            if n_tokens > threshold:
+                oversized += 1
+                meta = node.metadata or {}
+                logger.warning(
+                    "[NODE-TOKENS] OVERSIZED node: ~tokens=%s chars=%s file=%r "
+                    "page=%r preview=%r",
+                    n_tokens,
+                    len(embed_text),
+                    meta.get("file_name") or meta.get("document_id"),
+                    meta.get("page_label"),
+                    embed_text[:200].replace("\n", " "),
+                )
+        logger.warning(
+            "[NODE-TOKENS] parsed nodes=%s oversized(>%s tokens)=%s largest=~%s tokens",
+            len(nodes),
+            threshold,
+            oversized,
+            largest_tokens,
+        )
+    except Exception:
+        logger.warning("[NODE-TOKENS] diagnostic failed", exc_info=True)
+
+
 class BaseIngestComponent(abc.ABC):
     def __init__(
         self,
@@ -40,7 +105,9 @@ class BaseIngestComponent(abc.ABC):
         self.transformations = transformations
 
     @abc.abstractmethod
-    def ingest(self, file_name: str, file_data: Path, collection_name: str | None = None) -> list[Document]:
+    def ingest(
+        self, file_name: str, file_data: Path, collection_name: str | None = None
+    ) -> list[Document]:
         pass
 
     @abc.abstractmethod
@@ -128,20 +195,32 @@ class SimpleIngestComponent(BaseIngestComponentWithIndex):
     ) -> None:
         super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
 
-    def ingest(self, file_name: str, file_data: Path, collection_name: str | None = None) -> list[Document]:
+    def ingest(
+        self, file_name: str, file_data: Path, collection_name: str | None = None
+    ) -> list[Document]:
         logger.info("Ingesting file_name=%s", file_name)
-        documents = IngestionHelper.transform_file_into_documents(file_name, file_data, collection_name=collection_name)
+        documents = IngestionHelper.transform_file_into_documents(
+            file_name, file_data, collection_name=collection_name
+        )
         logger.info(
             "Transformed file=%s into count=%s documents", file_name, len(documents)
         )
         logger.debug("Saving the documents in the index and doc store")
         return self._save_docs(documents)
 
-    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None, is_temporary: bool | None = None) -> list[Document]:
+    def bulk_ingest(
+        self,
+        files: list[tuple[str, Path]],
+        collection_name: str | None = None,
+        is_temporary: bool | None = None,
+    ) -> list[Document]:
         saved_documents = []
         for file_name, file_data in files:
             documents = IngestionHelper.transform_file_into_documents(
-                file_name, file_data, collection_name=collection_name, is_temporary=is_temporary
+                file_name,
+                file_data,
+                collection_name=collection_name,
+                is_temporary=is_temporary,
             )
             saved_documents.extend(self._save_docs(documents))
         return saved_documents
@@ -176,9 +255,9 @@ class BatchIngestComponent(BaseIngestComponentWithIndex):
         super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
         # Make an efficient use of the CPU and GPU, the embedding
         # must be in the transformations
-        assert (
-            len(self.transformations) >= 2
-        ), "Embeddings must be in the transformations"
+        assert len(self.transformations) >= 2, (
+            "Embeddings must be in the transformations"
+        )
         assert count_workers > 0, "count_workers must be > 0"
         self.count_workers = count_workers
 
@@ -186,16 +265,22 @@ class BatchIngestComponent(BaseIngestComponentWithIndex):
             processes=self.count_workers
         )
 
-    def ingest(self, file_name: str, file_data: Path, collection_name: str | None = None) -> list[Document]:
+    def ingest(
+        self, file_name: str, file_data: Path, collection_name: str | None = None
+    ) -> list[Document]:
         logger.info("Ingesting file_name=%s", file_name)
-        documents = IngestionHelper.transform_file_into_documents(file_name, file_data, collection_name=collection_name)
+        documents = IngestionHelper.transform_file_into_documents(
+            file_name, file_data, collection_name=collection_name
+        )
         logger.info(
             "Transformed file=%s into count=%s documents", file_name, len(documents)
         )
         logger.debug("Saving the documents in the index and doc store")
         return self._save_docs(documents)
 
-    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None) -> list[Document]:
+    def bulk_ingest(
+        self, files: list[tuple[str, Path]], collection_name: str | None = None
+    ) -> list[Document]:
         documents = list(
             itertools.chain.from_iterable(
                 self._file_to_documents_work_pool.starmap(
@@ -212,6 +297,8 @@ class BatchIngestComponent(BaseIngestComponentWithIndex):
 
     def _save_docs(self, documents: list[Document]) -> list[Document]:
         logger.debug("Transforming count=%s documents into nodes", len(documents))
+        # TEMP DIAGNOSTIC: gated by PGPT_DEBUG_NODE_TOKENS; no-op otherwise.
+        _debug_log_oversized_nodes(self.transformations, documents)
         nodes = run_transformations(
             documents,  # type: ignore[arg-type]
             self.transformations,
@@ -251,9 +338,9 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
         super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
         # To make an efficient use of the CPU and GPU, the embeddings
         # must be in the transformations (to be computed in batches)
-        assert (
-            len(self.transformations) >= 2
-        ), "Embeddings must be in the transformations"
+        assert len(self.transformations) >= 2, (
+            "Embeddings must be in the transformations"
+        )
         assert count_workers > 0, "count_workers must be > 0"
         self.count_workers = count_workers
         # We are doing our own multiprocessing
@@ -268,7 +355,13 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
             processes=self.count_workers
         )
 
-    def ingest(self, file_name: str, file_data: Path, collection_name: str | None = None, is_temporary: bool | None = None) -> list[Document]:
+    def ingest(
+        self,
+        file_name: str,
+        file_data: Path,
+        collection_name: str | None = None,
+        is_temporary: bool | None = None,
+    ) -> list[Document]:
         logger.info("Ingesting file_name=%s", file_name)
         # Running in a single (1) process to release the current
         # thread, and take a dedicated CPU core for computation
@@ -282,7 +375,12 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
         logger.debug("Saving the documents in the index and doc store")
         return self._save_docs(documents)
 
-    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None, is_temporary: bool | None = None) -> list[Document]:
+    def bulk_ingest(
+        self,
+        files: list[tuple[str, Path]],
+        collection_name: str | None = None,
+        is_temporary: bool | None = None,
+    ) -> list[Document]:
         # Lightweight threads, used for parallelize the
         # underlying IO calls made in the ingestion
         documents = list(
@@ -297,6 +395,8 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
 
     def _save_docs(self, documents: list[Document]) -> list[Document]:
         logger.debug("Transforming count=%s documents into nodes", len(documents))
+        # TEMP DIAGNOSTIC: gated by PGPT_DEBUG_NODE_TOKENS; no-op otherwise.
+        _debug_log_oversized_nodes(self.transformations, documents)
         nodes = run_transformations(
             documents,  # type: ignore[arg-type]
             self.transformations,
@@ -360,9 +460,9 @@ class PipelineIngestComponent(BaseIngestComponentWithIndex):
     ) -> None:
         super().__init__(storage_context, embed_model, transformations, *args, **kwargs)
         self.count_workers = count_workers
-        assert (
-            len(self.transformations) >= 2
-        ), "Embeddings must be in the transformations"
+        assert len(self.transformations) >= 2, (
+            "Embeddings must be in the transformations"
+        )
         assert count_workers > 0, "count_workers must be > 0"
         self.count_workers = count_workers
         # We are doing our own multiprocessing
@@ -473,13 +573,19 @@ class PipelineIngestComponent(BaseIngestComponentWithIndex):
         self.node_q.put(("flush", None, None, None))
         self.node_q.join()
 
-    def ingest(self, file_name: str, file_data: Path, collection_name: str | None = None) -> list[Document]:
-        documents = IngestionHelper.transform_file_into_documents(file_name, file_data, collection_name=collection_name)
+    def ingest(
+        self, file_name: str, file_data: Path, collection_name: str | None = None
+    ) -> list[Document]:
+        documents = IngestionHelper.transform_file_into_documents(
+            file_name, file_data, collection_name=collection_name
+        )
         self.doc_q.put(("process", file_name, documents))
         self._flush()
         return documents
 
-    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None) -> list[Document]:
+    def bulk_ingest(
+        self, files: list[tuple[str, Path]], collection_name: str | None = None
+    ) -> list[Document]:
         docs = []
         for file_name, file_data in eta(files):
             try:

@@ -4,7 +4,7 @@ server:
 llm:
   mode: openailike
   max_new_tokens: 512
-  tokenizer: meta-llama/Meta-Llama-3.1-8B-Instruct
+  tokenizer: Qwen/Qwen2.5-1.5B-Instruct
   temperature: 0.1
 
 embedding:
@@ -17,5 +17,5 @@ huggingface:
 openai:
   api_base: http://localhost:8000/v1
   api_key: EMPTY
-  model: facebook/opt-125m
+  model: Qwen/Qwen2.5-1.5B-Instruct
   request_timeout: 600.0

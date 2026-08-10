@@ -135,13 +135,21 @@ class VectorStoreComponent:
                         client = QdrantClient(
                             **settings.qdrant.model_dump(exclude_none=True)
                         )
-                    return typing.cast(
-                        BasePydanticVectorStore,
-                        QdrantVectorStore(
-                            client=client,
-                            collection_name=collection_name,
-                        ),
+                    store = QdrantVectorStore(
+                        client=client,
+                        collection_name=collection_name,
                     )
+                    # Workaround for llama-index-vector-stores-qdrant 0.2.17 bug:
+                    # PrivateAttr fields assigned before super().__init__() land in
+                    # __dict__ instead of __pydantic_private__, making them
+                    # inaccessible via the Pydantic descriptor. Recover the value.
+                    try:
+                        _ = store._collection_initialized
+                    except AttributeError:
+                        val = store.__dict__.get("_collection_initialized", False)
+                        if store.__pydantic_private__ is not None:
+                            store.__pydantic_private__["_collection_initialized"] = val
+                    return typing.cast(BasePydanticVectorStore, store)
 
                 case "milvus":
                     try:

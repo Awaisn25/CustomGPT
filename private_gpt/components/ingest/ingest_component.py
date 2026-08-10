@@ -150,7 +150,7 @@ class SimpleIngestComponent(BaseIngestComponentWithIndex):
         logger.debug("Transforming count=%s documents into nodes", len(documents))
         with self._index_thread_lock:
             for document in documents:
-                self._index.insert(document, show_progress=True)
+                self._index.insert(document)
             logger.debug("Persisting the index and nodes")
             # persist the index and nodes
             self._save_index()
@@ -268,12 +268,13 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
             processes=self.count_workers
         )
 
-    def ingest(self, file_name: str, file_data: Path, collection_name: str | None = None) -> list[Document]:
+    def ingest(self, file_name: str, file_data: Path, collection_name: str | None = None, is_temporary: bool | None = None) -> list[Document]:
         logger.info("Ingesting file_name=%s", file_name)
         # Running in a single (1) process to release the current
         # thread, and take a dedicated CPU core for computation
         documents = self._file_to_documents_work_pool.apply(
-            IngestionHelper.transform_file_into_documents, (file_name, file_data, collection_name)
+            IngestionHelper.transform_file_into_documents,
+            (file_name, file_data, collection_name, is_temporary),
         )
         logger.info(
             "Transformed file=%s into count=%s documents", file_name, len(documents)
@@ -281,13 +282,15 @@ class ParallelizedIngestComponent(BaseIngestComponentWithIndex):
         logger.debug("Saving the documents in the index and doc store")
         return self._save_docs(documents)
 
-    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None) -> list[Document]:
+    def bulk_ingest(self, files: list[tuple[str, Path]], collection_name: str | None = None, is_temporary: bool | None = None) -> list[Document]:
         # Lightweight threads, used for parallelize the
         # underlying IO calls made in the ingestion
-
         documents = list(
             itertools.chain.from_iterable(
-                self._ingest_work_pool.starmap(self.ingest, files)
+                self._ingest_work_pool.starmap(
+                    self.ingest,
+                    [(f, p, collection_name, is_temporary) for f, p in files],
+                )
             )
         )
         return documents
